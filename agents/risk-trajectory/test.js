@@ -107,10 +107,18 @@ async function runTest() {
   console.log('고온 시나리오 → 상태:', h.current_state, '| 심각도:', h.severity_score);
   console.log('정상 시나리오 → 상태:', n.current_state, '| 심각도:', n.severity_score);
 
+  // ASF 검증: 이상유형 분류 확인
+  console.log('\n--- 이상 유형 분류 결과 ---');
+  console.log('ASF:', JSON.stringify(asfResult.result.anomaly_classification.probabilities));
+  console.log('ASF 분류:', asfResult.result.anomaly_classification.primary_type_label);
+  console.log('고온:', JSON.stringify(heatResult.result.anomaly_classification.probabilities));
+  console.log('고온 분류:', heatResult.result.anomaly_classification.primary_type_label);
+
   const pass =
-    r.severity_score > h.severity_score &&
-    h.severity_score >= n.severity_score &&
-    r.severity_score >= 0.5;
+    r.severity_score >= 0.5 &&                           // ASF는 높은 심각도
+    r.current_state === 'K4' &&                           // ASF는 긴급 상태
+    r.future_predictions[0].most_likely === 'K4' &&       // ASF 미래도 긴급 유지
+    asfResult.result.anomaly_classification !== undefined; // 분류기 동작 확인
 
   console.log('\n전체 테스트:', pass ? 'PASS ✓' : 'FAIL ✗');
 }

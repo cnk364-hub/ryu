@@ -37,14 +37,25 @@ class HMM {
       [0.01,  0.04,  0.15,  0.80 ],  // from K4 (긴급)
     ];
 
-    // 방출 확률 행렬 B (상태별 관측 확률)
+    // 방출 확률 행렬 B (이산 구간 방식 - 폴백용)
     this.B = config.B || [
-      // O1     O2     O3     O4     O5    (이상점수 구간)
-      [0.60,  0.25,  0.10,  0.04,  0.01],  // K1: 정상 → 낮은 이상점수
-      [0.10,  0.30,  0.35,  0.20,  0.05],  // K2: 주의 → 중간 이상점수
-      [0.03,  0.07,  0.20,  0.45,  0.25],  // K3: 위험 → 높은 이상점수
-      [0.01,  0.03,  0.06,  0.30,  0.60],  // K4: 긴급 → 매우 높은 이상점수
+      [0.60,  0.25,  0.10,  0.04,  0.01],  // K1
+      [0.10,  0.30,  0.35,  0.20,  0.05],  // K2
+      [0.03,  0.07,  0.20,  0.45,  0.25],  // K3
+      [0.01,  0.03,  0.06,  0.30,  0.60],  // K4
     ];
+
+    // Gaussian Emission 파라미터: P(X|S) ~ N(mu, sigma²)
+    // 각 상태별 이상점수의 평균(mu)과 표준편차(sigma)
+    this.gaussianEmission = config.gaussianEmission || [
+      { mu: 0.15, sigma: 0.10 },  // K1 (정상): 이상점수 낮음
+      { mu: 0.40, sigma: 0.12 },  // K2 (주의): 이상점수 중간
+      { mu: 0.65, sigma: 0.10 },  // K3 (위험): 이상점수 높음
+      { mu: 0.85, sigma: 0.08 },  // K4 (긴급): 이상점수 매우 높음
+    ];
+
+    // Emission 모드: 'gaussian' (연속) 또는 'discrete' (이산)
+    this.emissionMode = config.emissionMode || 'gaussian';
 
     this._validateModel();
   }
@@ -79,22 +90,49 @@ class HMM {
   }
 
   /**
+   * Gaussian 방출 확률 P(X|S) 계산
+   * @param {number} score - 연속 이상 점수 (0~1)
+   * @param {number} stateIdx - 상태 인덱스 (0~3)
+   * @returns {number} 확률 밀도
+   */
+  gaussianEmit(score, stateIdx) {
+    const { mu, sigma } = this.gaussianEmission[stateIdx];
+    const diff = score - mu;
+    return (1 / (sigma * Math.sqrt(2 * Math.PI))) *
+      Math.exp(-0.5 * (diff / sigma) ** 2);
+  }
+
+  /**
+   * 상태별 방출 확률 반환 (모드에 따라 Gaussian 또는 이산)
+   * @param {number} obs - 관측값 (이산 인덱스 또는 연속 점수)
+   * @param {number} stateIdx - 상태 인덱스
+   * @param {number} rawScore - 원본 연속 점수 (Gaussian 모드용)
+   */
+  emitProb(obs, stateIdx, rawScore) {
+    if (this.emissionMode === 'gaussian' && rawScore !== undefined) {
+      return this.gaussianEmit(rawScore, stateIdx);
+    }
+    return this.B[stateIdx][obs];
+  }
+
+  /**
    * Viterbi 알고리즘 - 최적 상태 경로 추정
    *
    * @param {Array<number>} obsSequence - 관측 인덱스 시퀀스
+   * @param {Array<number>} rawScores - 원본 연속 점수 (Gaussian 모드용, 선택)
    * @returns {Object} { path, probability, stateLabels }
    */
-  viterbi(obsSequence) {
+  viterbi(obsSequence, rawScores) {
     const T = obsSequence.length;
     if (T === 0) return { path: [], probability: 0, stateLabels: [] };
 
-    // dp[t][j] = t시점에서 상태 j에 있을 최대 확률 (로그)
     const dp = Array.from({ length: T }, () => new Float64Array(this.N));
     const backpointer = Array.from({ length: T }, () => new Int32Array(this.N));
 
     // 초기화 (t=0)
     for (let j = 0; j < this.N; j++) {
-      dp[0][j] = Math.log(this.pi[j] + 1e-300) + Math.log(this.B[j][obsSequence[0]] + 1e-300);
+      const ep = this.emitProb(obsSequence[0], j, rawScores ? rawScores[0] : undefined);
+      dp[0][j] = Math.log(this.pi[j] + 1e-300) + Math.log(ep + 1e-300);
       backpointer[0][j] = 0;
     }
 
@@ -107,7 +145,8 @@ class HMM {
           const val = dp[t - 1][i] + Math.log(this.A[i][j] + 1e-300);
           if (val > maxVal) { maxVal = val; maxIdx = i; }
         }
-        dp[t][j] = maxVal + Math.log(this.B[j][obsSequence[t]] + 1e-300);
+        const ep = this.emitProb(obsSequence[t], j, rawScores ? rawScores[t] : undefined);
+        dp[t][j] = maxVal + Math.log(ep + 1e-300);
         backpointer[t][j] = maxIdx;
       }
     }
@@ -141,19 +180,20 @@ class HMM {
    * Forward 알고리즘 - 현재 상태 확률 분포 계산
    *
    * @param {Array<number>} obsSequence - 관측 인덱스 시퀀스
+   * @param {Array<number>} rawScores - 원본 연속 점수 (Gaussian 모드용, 선택)
    * @returns {Object} { currentDistribution, logLikelihood }
    */
-  forward(obsSequence) {
+  forward(obsSequence, rawScores) {
     const T = obsSequence.length;
     if (T === 0) return { currentDistribution: this.pi.slice(), logLikelihood: 0 };
 
-    // alpha[t][j] = t시점까지의 관측을 생성하며 상태 j에 있을 확률
     let alpha = new Array(this.N);
 
     // 초기화
     let scale = 0;
     for (let j = 0; j < this.N; j++) {
-      alpha[j] = this.pi[j] * this.B[j][obsSequence[0]];
+      const ep = this.emitProb(obsSequence[0], j, rawScores ? rawScores[0] : undefined);
+      alpha[j] = this.pi[j] * ep;
       scale += alpha[j];
     }
     // 스케일링 (언더플로 방지)
@@ -169,7 +209,8 @@ class HMM {
         for (let i = 0; i < this.N; i++) {
           sum += alpha[i] * this.A[i][j];
         }
-        newAlpha[j] = sum * this.B[j][obsSequence[t]];
+        const ep = this.emitProb(obsSequence[t], j, rawScores ? rawScores[t] : undefined);
+        newAlpha[j] = sum * ep;
         scale += newAlpha[j];
       }
       logLikelihood += Math.log(scale + 1e-300);

@@ -12,6 +12,7 @@
 
 const { HMM } = require('./hmm');
 const { TrajectoryVisualizer } = require('./trajectory-visualizer');
+const { AnomalyClassifier } = require('./anomaly-classifier');
 
 class RiskTrajectoryAgent {
   constructor(config = {}) {
@@ -24,6 +25,7 @@ class RiskTrajectoryAgent {
 
     this.hmm = new HMM(config.hmmConfig);
     this.visualizer = new TrajectoryVisualizer();
+    this.classifier = new AnomalyClassifier();
   }
 
   /**
@@ -52,11 +54,11 @@ class RiskTrajectoryAgent {
     // 1. 이상 점수를 관측 시퀀스로 변환
     const obsSequence = anomalyScores.map(s => this.hmm.scoreToObservation(s));
 
-    // 2. Viterbi: 최적 상태 경로 추정
-    const viterbiResult = this.hmm.viterbi(obsSequence);
+    // 2. Viterbi: 최적 상태 경로 추정 (Gaussian emission 사용)
+    const viterbiResult = this.hmm.viterbi(obsSequence, anomalyScores);
 
-    // 3. Forward: 현재 상태 확률 분포
-    const forwardResult = this.hmm.forward(obsSequence);
+    // 3. Forward: 현재 상태 확률 분포 (Gaussian emission 사용)
+    const forwardResult = this.hmm.forward(obsSequence, anomalyScores);
 
     // 4. 상태 지속성 및 추세 반영하여 보정
     const adjustedDistribution = this._adjustDistribution(
@@ -74,7 +76,18 @@ class RiskTrajectoryAgent {
       this.config.predictionHorizon
     );
 
-    // 7. 위험 타임라인 (K3/K4 도달 예상 시간)
+    // 7. 이상 유형 분류 (질병/환경/사료/계절/장비)
+    const contextFeedingAnalysis = contextResult && contextResult.feeding_analysis;
+    const contextEnvAnalysis = contextResult && contextResult.environment_analysis;
+    const anomalyClassification = this.classifier.classify({
+      feedingAnalysis: contextFeedingAnalysis || this._basicFeedingAnalysis(feedingData),
+      envAnalysis: contextEnvAnalysis || null,
+      anomalyResult: { isAnomaly: viterbiResult.path.slice(-1)[0] !== 'K1', anomalyDays: this._countTrailingState(viterbiResult.path, viterbiResult.path.slice(-1)[0]) },
+      livestockInfo: input.livestockInfo,
+      season: this._getCurrentSeason(),
+    });
+
+    // 8. 위험 타임라인 (K3/K4 도달 예상 시간)
     const riskTimeline = this._estimateRiskTimeline(adjustedDistribution, futurePredictions);
 
     // 8. 심각도 점수 계산
@@ -117,9 +130,56 @@ class RiskTrajectoryAgent {
           most_likely: p.mostLikelyState,
           distribution: p.distribution,
         })),
+        anomaly_classification: anomalyClassification,
         trajectory_visualization: visualization,
       },
     };
+  }
+
+  /**
+   * 간이 급이 분석 (Context Agent 결과가 없을 때)
+   */
+  _basicFeedingAnalysis(feedingData) {
+    if (!feedingData || feedingData.length < 2) {
+      return { changeRate3d: 0, trend: 'stable', pattern: 'normal', volatility: 0 };
+    }
+    const recent3 = feedingData.slice(-3).map(d => d.consumption_kg);
+    const older = feedingData.slice(-10, -3).map(d => d.consumption_kg);
+    const avg3 = recent3.reduce((a, b) => a + b, 0) / recent3.length;
+    const avgOlder = older.length > 0 ? older.reduce((a, b) => a + b, 0) / older.length : avg3;
+    const changeRate3d = avgOlder > 0 ? ((avg3 - avgOlder) / avgOlder) * 100 : 0;
+
+    const vals = feedingData.slice(-7).map(d => d.consumption_kg);
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const std = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length);
+    const volatility = mean > 0 ? std / mean : 0;
+
+    let trend = 'stable';
+    if (changeRate3d < -15) trend = 'rapid_decline';
+    else if (changeRate3d < -5) trend = 'gradual_decline';
+
+    let pattern = 'normal';
+    if (changeRate3d < -20) pattern = 'acute_drop';
+    else if (volatility > 0.15) pattern = 'erratic';
+
+    return { changeRate3d: Math.round(changeRate3d * 10) / 10, trend, pattern, volatility: Math.round(volatility * 1000) / 1000 };
+  }
+
+  _countTrailingState(path, state) {
+    let count = 0;
+    for (let i = path.length - 1; i >= 0; i--) {
+      if (path[i] === state) count++;
+      else break;
+    }
+    return count;
+  }
+
+  _getCurrentSeason() {
+    const month = new Date().getMonth() + 1;
+    if (month >= 3 && month <= 5) return 'spring';
+    if (month >= 6 && month <= 8) return 'summer';
+    if (month >= 9 && month <= 11) return 'fall';
+    return 'winter';
   }
 
   /**
