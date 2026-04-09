@@ -47,15 +47,17 @@ class HMM {
 
     // Gaussian Emission 파라미터: P(X|S) ~ N(mu, sigma²)
     // 각 상태별 이상점수의 평균(mu)과 표준편차(sigma)
+    // Gaussian Emission 파라미터 (σ를 넓혀서 오판 방지)
     this.gaussianEmission = config.gaussianEmission || [
-      { mu: 0.15, sigma: 0.10 },  // K1 (정상): 이상점수 낮음
-      { mu: 0.40, sigma: 0.12 },  // K2 (주의): 이상점수 중간
-      { mu: 0.65, sigma: 0.10 },  // K3 (위험): 이상점수 높음
-      { mu: 0.85, sigma: 0.08 },  // K4 (긴급): 이상점수 매우 높음
+      { mu: 0.12, sigma: 0.12 },  // K1 (정상): 이상점수 낮음
+      { mu: 0.38, sigma: 0.14 },  // K2 (주의): 이상점수 중간
+      { mu: 0.68, sigma: 0.12 },  // K3 (위험): 이상점수 높음
+      { mu: 0.88, sigma: 0.08 },  // K4 (긴급): 이상점수 매우 높음
     ];
 
-    // Emission 모드: 'gaussian' (연속) 또는 'discrete' (이산)
-    this.emissionMode = config.emissionMode || 'gaussian';
+    // Emission 모드: 'ensemble' (이산+Gaussian 결합), 'gaussian', 'discrete'
+    this.emissionMode = config.emissionMode || 'ensemble';
+    this.ensembleWeight = config.ensembleWeight || 0.6; // Gaussian 비중
 
     this._validateModel();
   }
@@ -109,6 +111,13 @@ class HMM {
    * @param {number} rawScore - 원본 연속 점수 (Gaussian 모드용)
    */
   emitProb(obs, stateIdx, rawScore) {
+    if (this.emissionMode === 'ensemble' && rawScore !== undefined) {
+      // 앙상블: Gaussian과 이산 모델의 가중 평균
+      const gProb = this.gaussianEmit(rawScore, stateIdx);
+      const dProb = this.B[stateIdx][obs];
+      const w = this.ensembleWeight;
+      return w * gProb + (1 - w) * dProb;
+    }
     if (this.emissionMode === 'gaussian' && rawScore !== undefined) {
       return this.gaussianEmit(rawScore, stateIdx);
     }
