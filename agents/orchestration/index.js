@@ -11,6 +11,7 @@
  */
 
 const { StateMachine } = require('./state-machine');
+const { SCENARIO_PROFILES, detectScenario } = require('../scenario-profiles');
 
 // 에이전트 모듈 로드
 const { ContextAgent } = require('../context/index');
@@ -68,15 +69,22 @@ class OrchestrationAgent {
 
     const { feedingData, environmentData, farmInfo, livestockInfo, onStep } = input;
 
-    this._log('pipeline_start', '파이프라인 시작');
+    // 시나리오 감지 및 프로필 로드
+    const scenarioId = input.scenario || detectScenario(feedingData, environmentData);
+    const profile = SCENARIO_PROFILES[scenarioId] || SCENARIO_PROFILES.disease_asf;
+    this.currentProfile = profile;
+
+    this._log('pipeline_start', `파이프라인 시작 — 시나리오: ${profile.name}`);
 
     // IDLE → CONTEXT
     this.stateMachine.transition();
 
     // === CONTEXT Agent ===
-    this._log('agent_start', 'Context Agent 시작');
+    this._log('agent_start', `Context Agent 시작 (${profile.context.analysisScope})`);
+    this.agents.context.config.anomalyThreshold = profile.context.anomalyThreshold;
     const contextResult = await this.agents.context.analyze({
       feedingData, environmentData, farmInfo, livestockInfo,
+      scenarioProfile: profile.context,
     });
     this.pipelineResults.context = contextResult;
     this._log('agent_complete', 'Context Agent 완료', { duration: contextResult.duration_ms });
@@ -187,6 +195,7 @@ class OrchestrationAgent {
       timestamp: new Date().toISOString(),
       duration_ms: pipelineDuration,
       result: {
+        scenario: { id: profile.id, name: profile.name, trigger: profile.trigger },
         final_report: finalReport,
         pipeline_state: this.stateMachine.getState(),
         agent_results: Object.fromEntries(
@@ -217,8 +226,17 @@ class OrchestrationAgent {
     const labels = { K1: '정상', K2: '주의', K3: '위험', K4: '긴급' };
     const alertLevels = { K1: 'normal', K2: 'caution', K3: 'danger', K4: 'emergency' };
 
-    // 농장주 메시지
-    const farmerMessage = plan.recommendation || ctx.situation_summary || '현재 상태가 정상입니다.';
+    // 시나리오별 농장주 메시지
+    const profile = this.currentProfile || {};
+    let farmerMessage;
+    if (profile.id === 'shipment_optimization') {
+      const feeding = ctx.feeding_analysis || {};
+      farmerMessage = `[출하 분석] 현재 급이량 ${feeding.currentAvg || 0}kg, ` +
+        `추세 ${feeding.trend === 'stable' ? '안정적' : feeding.trend || '확인중'}. ` +
+        `${plan.recommendation || 'FCR 및 성장 데이터 기반 출하 최적 시기를 분석 중입니다.'}`;
+    } else {
+      farmerMessage = plan.recommendation || ctx.situation_summary || '현재 상태가 정상입니다.';
+    }
 
     // 수의사 통보
     let vetNotification = null;
