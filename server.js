@@ -23,9 +23,11 @@ const mockResponses = JSON.parse(
 // Load simulator data
 const simulator = require('./mock-data/simulator.js');
 
-// Load Context Agent (실제 AI 에이전트)
+// Load AI Agents (실제 AI 에이전트)
 const { ContextAgent } = require('./agents/context/index.js');
+const { RiskTrajectoryAgent } = require('./agents/risk-trajectory/index.js');
 const contextAgent = new ContextAgent({ anomalyThreshold: 0.6 });
+const riskAgent = new RiskTrajectoryAgent({ predictionHorizon: 7 });
 
 const server = http.createServer((req, res) => {
   // CORS
@@ -64,6 +66,33 @@ const server = http.createServer((req, res) => {
           feedingData: feedingData,
           environmentData: envData,
           farmInfo: parsed.farmInfo || { name: '제일축산 1호동', type: 'pig' },
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // API: Risk Trajectory Agent 분석
+  if (url.pathname === '/api/agents/risk-trajectory' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const parsed = JSON.parse(body);
+        const scenario = parsed.scenario || 'disease_asf';
+        const feedingData = simulator.generateFeedingData(scenario);
+        const { anomalyScores } = simulator.generateData(scenario);
+        const scores = anomalyScores.map(a => a.score);
+
+        const result = await riskAgent.analyze({
+          anomalyScores: scores,
+          feedingData: feedingData,
         });
 
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
