@@ -23,6 +23,10 @@ const mockResponses = JSON.parse(
 // Load simulator data
 const simulator = require('./mock-data/simulator.js');
 
+// Load Context Agent (실제 AI 에이전트)
+const { ContextAgent } = require('./agents/context/index.js');
+const contextAgent = new ContextAgent({ anomalyThreshold: 0.6 });
+
 const server = http.createServer((req, res) => {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -36,6 +40,41 @@ const server = http.createServer((req, res) => {
   }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  // API: Context Agent 실제 분석
+  if (url.pathname === '/api/agents/context' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const parsed = JSON.parse(body);
+        const scenario = parsed.scenario || 'disease_asf';
+
+        const feedingData = simulator.generateFeedingData(scenario);
+        const envData = simulator.generateEnvironmentData(scenario);
+
+        // 정상 기간 데이터로 학습
+        const normalData = feedingData.slice(0, 24);
+        if (normalData.length >= 7) {
+          contextAgent.train(normalData);
+        }
+
+        // 분석 실행
+        const result = await contextAgent.analyze({
+          feedingData: feedingData,
+          environmentData: envData,
+          farmInfo: parsed.farmInfo || { name: '제일축산 1호동', type: 'pig' },
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
 
   // API: Simulator data
   if (url.pathname === '/api/simulator' && req.method === 'GET') {
