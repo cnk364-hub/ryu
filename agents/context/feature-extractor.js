@@ -12,13 +12,16 @@
 
 class FeatureExtractor {
   constructor() {
+    // 제안서 기준 Feature Engineering: 편차, 지속일수, 추세(slope), 변동성, 윈도우 평균
     this.featureNames = [
-      'consumption_kg',
-      'deviation_pct',
-      'slope',
-      'volatility',
-      'consumption_ratio',
-      'rolling_min_ratio',
+      'consumption_kg',       // 일일 급이량
+      'deviation_pct',        // 편차 (이동평균 대비 %)
+      'slope',                // 추세 (3일 회귀 기울기)
+      'volatility',           // 변동성 (5일 CV)
+      'window_avg',           // 윈도우 평균 (7일 이동평균)
+      'consumption_ratio',    // 전일 대비 비율
+      'rolling_min_ratio',    // 7일 최솟값/평균
+      'anomaly_streak',       // 지속일수 (연속 이상 일수)
     ];
   }
 
@@ -72,21 +75,35 @@ class FeatureExtractor {
     const mean5 = this._mean(window5);
     const volatility = mean5 > 0 ? this._stddev(window5) / mean5 : 0;
 
-    // 5. 전일 대비 비율
+    // 5. 윈도우 평균 (7일 이동평균)
+    const windowAvg = avg7;
+
+    // 6. 전일 대비 비율
     const prevValue = index > 0 ? consumptions[index - 1] : value;
     const ratio = prevValue > 0 ? value / prevValue : 1;
 
-    // 6. 7일 최솟값 / 7일 평균
+    // 7. 7일 최솟값 / 7일 평균
     const min7 = Math.min(...window7);
     const minRatio = avg7 > 0 ? min7 / avg7 : 1;
+
+    // 8. 지속일수 (연속으로 기준선 대비 하락한 일수)
+    let anomalyStreak = 0;
+    for (let k = index; k >= 0; k--) {
+      const w = consumptions.slice(Math.max(0, k - 6), k + 1);
+      const avg = this._mean(w);
+      if (avg > 0 && ((consumptions[k] - avg) / avg) * 100 < -10) anomalyStreak++;
+      else break;
+    }
 
     return [
       Math.round(consumption * 100) / 100,
       Math.round(deviation * 100) / 100,
       Math.round(slope * 100) / 100,
       Math.round(volatility * 1000) / 1000,
+      Math.round(windowAvg * 10) / 10,
       Math.round(ratio * 1000) / 1000,
       Math.round(minRatio * 1000) / 1000,
+      anomalyStreak,
     ];
   }
 
