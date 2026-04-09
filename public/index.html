@@ -1,35 +1,14 @@
 <!DOCTYPE html>
-<html lang="ko" class="dark">
+<html lang="ko">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>축산 AI 에이전트 데모 - 가축 질병 조기경보 시스템</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: { extend: {} }
-    };
-  </script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-  <style>
-    body { background: #0a0f1a; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #1f2937; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
-    @keyframes pulse-border { 0%,100%{opacity:.3} 50%{opacity:1} }
-    .risk-emergency { box-shadow: inset 0 0 0 2px rgba(239,68,68,0.5); animation: pulse-border 1.5s ease-in-out infinite; }
-    .risk-danger { box-shadow: inset 0 0 0 2px rgba(249,115,22,0.4); }
-    .risk-caution { box-shadow: inset 0 0 0 2px rgba(234,179,8,0.3); }
-    @keyframes spin-slow { to { transform: rotate(360deg); } }
-    .agent-pulse { animation: pulse-border 1.5s ease-in-out infinite; }
-  </style>
+  <link rel="stylesheet" href="/styles.css">
 </head>
-<body class="min-h-screen antialiased">
-  <div id="root"></div>
-  <script type="text/babel" src="/app.js"></script>
+<body>
+  <div id="app"></div>
+  <script src="/lib.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
