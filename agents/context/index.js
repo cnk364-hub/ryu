@@ -104,7 +104,7 @@ class ContextAgent {
     );
 
     // 8. 종합 상황 요약 생성
-    const situationSummary = this.situationAnalyzer.generateSummary({
+    const situationSummary = await this.situationAnalyzer.generateSummary({
       feedingAnalysis,
       envAnalysis,
       anomalyResults,

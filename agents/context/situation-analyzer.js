@@ -6,7 +6,8 @@
  */
 
 class SituationAnalyzer {
-  constructor() {
+  constructor(config = {}) {
+    this.llmEndpoint = config.llmEndpoint || null;
     this.templates = {
       emergency: {
         disease: '최근 {days}일간 급이량이 기준 대비 {changeRate}% 급감하여 가축 질병 감염 의심 상황입니다. {details}',
@@ -31,7 +32,41 @@ class SituationAnalyzer {
    * @param {Object} analysis - 전체 분석 결과
    * @returns {string} 자연어 상황 요약
    */
-  generateSummary(analysis) {
+  async generateSummary(analysis) {
+    // LLM 연동 시: 구조화된 데이터를 LLM에 전달하여 자연어 생성
+    if (this.llmEndpoint) {
+      return await this._generateWithLLM(analysis);
+    }
+    // 룰 기반 템플릿 (폴백)
+    return this._generateWithTemplate(analysis);
+  }
+
+  /**
+   * LLM 기반 자연어 요약 (Sinong 8B 연동 시 활성화)
+   */
+  async _generateWithLLM(analysis) {
+    const { feedingAnalysis, envAnalysis, anomalyResults, riskIndicators } = analysis;
+    try {
+      const response = await fetch(this.llmEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'livestock-llm',
+          messages: [
+            { role: 'system', content: '당신은 축산 전문 AI입니다. 센서 분석 결과를 농장주가 이해할 수 있는 한국어 상황 요약으로 변환하세요. 3~5문장으로 작성하세요.' },
+            { role: 'user', content: JSON.stringify({ feedingAnalysis, envAnalysis, anomalyResults, riskIndicators }) },
+          ],
+          temperature: 0.3, max_tokens: 512,
+        }),
+      });
+      const result = await response.json();
+      return result.choices[0].message.content;
+    } catch {
+      return this._generateWithTemplate(analysis);
+    }
+  }
+
+  _generateWithTemplate(analysis) {
     const { feedingAnalysis, envAnalysis, anomalyResults, riskIndicators, farmInfo } = analysis;
     const level = riskIndicators.level;
     const parts = [];
