@@ -216,10 +216,6 @@ function AgentsTab() {
 function App() {
   var ctx = useAppState(), state = ctx.state, actions = ctx.actions;
   var activeTab = state.activeTab, riskLevel = state.riskLevel, pipeline = state.pipeline;
-  var currentTime = React.useState('')[0];
-  var setTime = React.useState('')[1];
-
-  // Use ref for time to avoid re-declaring useState
   var timeRef = React.useRef('');
   var _ft = React.useState(0), forceUpdate = _ft[1];
 
@@ -287,6 +283,13 @@ function App() {
 }
 
 // ===== Mount =====
-ReactDOM.createRoot(document.getElementById('root')).render(
-  h(AppStateProvider, null, h(App))
-);
+try {
+  var rootEl = document.getElementById('root');
+  if (ReactDOM.createRoot) {
+    ReactDOM.createRoot(rootEl).render(h(AppStateProvider, null, h(App)));
+  } else {
+    ReactDOM.render(h(AppStateProvider, null, h(App)), rootEl);
+  }
+} catch (e) {
+  document.getElementById('root').innerHTML = '<div style="color:red;padding:20px"><h2>Mount Error</h2><pre>' + e.message + '</pre></div>';
+}

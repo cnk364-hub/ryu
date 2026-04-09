@@ -1,8 +1,9 @@
 // ===== Components =====
 var h = React.createElement;
-var LineChart = Recharts.LineChart, Line = Recharts.Line, XAxis = Recharts.XAxis, YAxis = Recharts.YAxis,
-    CartesianGrid = Recharts.CartesianGrid, Tooltip = Recharts.Tooltip, ResponsiveContainer = Recharts.ResponsiveContainer,
-    ReferenceLine = Recharts.ReferenceLine, Legend = Recharts.Legend;
+var _RC = (typeof Recharts !== 'undefined') ? Recharts : {};
+var LineChart = _RC.LineChart, Line = _RC.Line, XAxis = _RC.XAxis, YAxis = _RC.YAxis,
+    CartesianGrid = _RC.CartesianGrid, Tooltip = _RC.Tooltip, ResponsiveContainer = _RC.ResponsiveContainer,
+    ReferenceLine = _RC.ReferenceLine, Legend = _RC.Legend;
 
 // ----- RiskBadge -----
 function RiskBadge(props) {
@@ -54,6 +55,9 @@ function RecommendationBox(props) {
 // ----- FeedingPatternChart -----
 function FeedingPatternChart(props) {
   var data = props.data, anomalyIndices = props.anomalyIndices || [];
+  if (!ResponsiveContainer) {
+    return h('div', { className: 'h-[320px] flex items-center justify-center text-gray-500 text-sm' }, 'Recharts 라이브러리 로딩 중...');
+  }
   var chartData = data.map(function (d, i) {
     return Object.assign({}, d, { dateLabel: d.date.slice(5), isAnomaly: anomalyIndices.includes(i) });
   });
