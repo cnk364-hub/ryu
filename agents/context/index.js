@@ -59,8 +59,19 @@ class ContextAgent {
    * @returns {Object} Context Agent 분석 결과
    */
   async analyze(input) {
-    const { feedingData, environmentData, farmInfo } = input;
+    const { feedingData, environmentData, farmInfo, livestockInfo } = input;
     const startTime = Date.now();
+
+    // livestockInfo 예시:
+    // {
+    //   breed: 'LYD',              // 품종
+    //   headCount: 1200,           // 사육두수
+    //   avgWeight: 95,             // 평균 체중 (kg)
+    //   avgAge: 150,               // 평균 일령
+    //   vaccinationHistory: [...], // 백신 접종 이력
+    //   recentMortality: 0.2,      // 최근 폐사율 (%)
+    //   feedType: '비육후기사료',    // 사료 종류
+    // }
 
     // 1. 데이터 품질 평가
     const dataQuality = this._assessDataQuality(feedingData, environmentData);
@@ -84,17 +95,21 @@ class ContextAgent {
     // 5. 환경 분석
     const envAnalysis = this._analyzeEnvironment(environmentData);
 
-    // 6. 위험 지표 도출
+    // 6. 개체/사육정보 결합 분석
+    const livestockAnalysis = this._analyzeLivestock(livestockInfo, feedingAnalysis);
+
+    // 7. 위험 지표 도출
     const riskIndicators = this._deriveRiskIndicators(
-      feedingAnalysis, envAnalysis, anomalyResults
+      feedingAnalysis, envAnalysis, anomalyResults, livestockAnalysis
     );
 
-    // 7. 종합 상황 요약 생성
+    // 8. 종합 상황 요약 생성
     const situationSummary = this.situationAnalyzer.generateSummary({
       feedingAnalysis,
       envAnalysis,
       anomalyResults,
       riskIndicators,
+      livestockAnalysis,
       farmInfo,
     });
 
@@ -117,6 +132,7 @@ class ContextAgent {
         },
         feeding_analysis: feedingAnalysis,
         environment_analysis: envAnalysis,
+        livestock_analysis: livestockAnalysis,
         data_quality: dataQuality,
       },
     };
@@ -286,7 +302,66 @@ class ContextAgent {
   /**
    * 위험 지표 도출
    */
-  _deriveRiskIndicators(feedingAnalysis, envAnalysis, anomalyResults) {
+  /**
+   * 개체/사육정보 분석
+   */
+  _analyzeLivestock(livestockInfo, feedingAnalysis) {
+    if (!livestockInfo) {
+      return { available: false, alerts: [] };
+    }
+
+    const alerts = [];
+    const { headCount, avgWeight, avgAge, recentMortality, breed } = livestockInfo;
+
+    // 두당 급이량 계산
+    let perHeadConsumption = null;
+    if (headCount && headCount > 0 && feedingAnalysis.currentAvg) {
+      perHeadConsumption = Math.round((feedingAnalysis.currentAvg / headCount) * 100) / 100;
+
+      // 체중 대비 급이 비율 (정상: 체중의 3~5%)
+      if (avgWeight && avgWeight > 0) {
+        const feedRatio = (perHeadConsumption / avgWeight) * 100;
+        if (feedRatio < 2) {
+          alerts.push(`두당 급이 비율 ${feedRatio.toFixed(1)}% - 체중 대비 과소 (정상: 3~5%)`);
+        } else if (feedRatio > 6) {
+          alerts.push(`두당 급이 비율 ${feedRatio.toFixed(1)}% - 체중 대비 과다`);
+        }
+      }
+    }
+
+    // 폐사율 체크
+    if (recentMortality !== undefined && recentMortality > 0.5) {
+      alerts.push(`최근 폐사율 ${recentMortality}% - 주의 (기준: 0.5% 이하)`);
+    }
+
+    // 일령 기반 급이 기대값 대비 분석
+    let expectedConsumption = null;
+    if (avgAge && avgWeight) {
+      // 비육돈 기준 체중별 예상 일일 급이량 (kg/두)
+      if (avgWeight < 30) expectedConsumption = 1.0;
+      else if (avgWeight < 60) expectedConsumption = 2.0;
+      else if (avgWeight < 90) expectedConsumption = 2.8;
+      else expectedConsumption = 3.2;
+
+      if (perHeadConsumption && expectedConsumption) {
+        const ratio = perHeadConsumption / expectedConsumption;
+        if (ratio < 0.7) {
+          alerts.push(`두당 급이량 기대값 대비 ${Math.round(ratio * 100)}% (과소)`);
+        }
+      }
+    }
+
+    return {
+      available: true,
+      breed: breed || 'unknown',
+      headCount,
+      perHeadConsumption,
+      expectedConsumption,
+      alerts,
+    };
+  }
+
+  _deriveRiskIndicators(feedingAnalysis, envAnalysis, anomalyResults, livestockAnalysis) {
     const indicators = [];
     let severityScore = 0;
 
@@ -329,6 +404,14 @@ class ContextAgent {
       envAnalysis.alerts.forEach(alert => {
         indicators.push(alert);
         severityScore += alert.includes('위험') ? 15 : 5;
+      });
+    }
+
+    // 개체/사육정보 기반 지표
+    if (livestockAnalysis && livestockAnalysis.alerts) {
+      livestockAnalysis.alerts.forEach(alert => {
+        indicators.push(alert);
+        severityScore += alert.includes('과소') ? 10 : 5;
       });
     }
 

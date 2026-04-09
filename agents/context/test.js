@@ -25,6 +25,14 @@ async function runTest() {
     feedingData: asfData,           // 전체 30일 (마지막 6일 이상)
     environmentData: asfEnv,
     farmInfo: { name: '제일축산 1호동', type: 'pig' },
+    livestockInfo: {
+      breed: 'LYD',
+      headCount: 120,
+      avgWeight: 95,
+      avgAge: 150,
+      recentMortality: 0.3,
+      feedType: '비육후기사료',
+    },
   });
 
   console.log('위험 수준:', asfResult.result.risk_level);
