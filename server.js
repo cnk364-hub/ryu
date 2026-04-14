@@ -145,7 +145,10 @@ const server = http.createServer((req, res) => {
   let filePath = url.pathname;
   if (filePath === '/' || filePath === '') filePath = '/index.html';
 
-  const fullPath = path.join(__dirname, 'public', filePath);
+  // Serve /mock-data/* directly from the mock-data/ folder (no API call needed)
+  const fullPath = filePath.startsWith('/mock-data/')
+    ? path.join(__dirname, filePath)
+    : path.join(__dirname, 'public', filePath);
   const ext = path.extname(fullPath);
 
   fs.readFile(fullPath, (err, data) => {
