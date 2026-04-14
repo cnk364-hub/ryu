@@ -146,26 +146,7 @@ function httpsGetText(targetUrl, headers = {}) {
 async function searchRegion(keyword) {
   const results = [];
 
-  // 1) new.land 검색 API
-  try {
-    const url = `https://new.land.naver.com/api/search?keyword=${encodeURIComponent(
-      keyword
-    )}&page=1`;
-    const { json } = await httpsGetJson(url);
-    if (json && Array.isArray(json.regions)) {
-      json.regions.forEach((r) => {
-        results.push({
-          cortarNo: r.cortarNo || r.regionCode,
-          name: [r.cortarName, r.cortarAddress].filter(Boolean).join(' '),
-          source: 'new.land/api/search',
-        });
-      });
-    }
-  } catch (e) {
-    console.warn('[region] new.land search failed:', e.message);
-  }
-
-  // 2) m.land HTML 페이지에서 추출 (가장 신뢰성 높음)
+  // 1) m.land HTML 검색 (429 회피 — new.land 검색 API는 인증 토큰 필요)
   if (results.length === 0) {
     try {
       const url = `https://m.land.naver.com/search/result/${encodeURIComponent(
@@ -203,7 +184,39 @@ async function searchRegion(keyword) {
 }
 
 /**
- * 매물 목록 조회.
+ * sleep 헬퍼.
+ */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 429 친화적 요청 — 실패시 백오프 재시도.
+ */
+async function fetchJsonWithRetry(url, headers = {}, retries = 3) {
+  let lastErr;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await httpsGetJson(url, headers);
+    } catch (e) {
+      lastErr = e;
+      const msg = e.message || '';
+      if (msg.includes('HTTP 429') || msg.includes('TOO_MANY_REQUESTS')) {
+        const wait = 1500 * Math.pow(2, i); // 1.5s, 3s, 6s
+        console.warn(`[retry ${i + 1}/${retries}] 429 - waiting ${wait}ms`);
+        await sleep(wait);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * 매물 목록 조회 — 모바일(m.land) 엔드포인트 사용.
+ *
+ * new.land.naver.com/api/articles 는 JWT Authorization 헤더 없이는
+ * 즉시 429 (Rate limit) 를 반환한다. 모바일 m.land 의 cluster/ajax/articleList
+ * 는 인증 없이도 호출 가능하다.
  *
  * @param {Object} opts
  * @param {string} opts.cortarNo  지역코드 (10자리)
@@ -212,16 +225,62 @@ async function searchRegion(keyword) {
  */
 async function fetchArticles({ cortarNo, tradeType = 'A1', page = 1 }) {
   const params = new URLSearchParams({
+    itemId: '',
+    mapKey: '',
+    lgeo: '',
+    showR0: '',
+    rletTpCd: 'APT:OPST:VL:DDDGG:JWJT',
+    tradTpCd: tradeType,
+    z: '15',
     cortarNo,
-    order: 'rank',
-    realEstateType: 'APT:OPST:VL:DDDGG:JWJT', // 아파트/오피스텔/빌라/단독다가구/주거형주택
-    tradeType,
     page: String(page),
-    articleState: '',
   });
-  const url = `https://new.land.naver.com/api/articles?${params.toString()}`;
-  const { json } = await httpsGetJson(url);
+  const url = `https://m.land.naver.com/cluster/ajax/articleList?${params.toString()}`;
+  const { json } = await fetchJsonWithRetry(url, {
+    Referer: `https://m.land.naver.com/map/0:0:15/A1/${cortarNo}`,
+  });
   return json || {};
+}
+
+/**
+ * 모바일 응답(atclNo, atclNm, prc, ...) 을 표준 스키마로 정규화.
+ */
+function normalizeMobileArticle(a) {
+  const tradeMap = { A1: '매매', B1: '전세', B2: '월세', B3: '단기임대' };
+  const dealPrc = a.prc || 0;             // 매매가 / 보증금 (만원 단위 정수)
+  const rentPrc = a.rentPrc || 0;         // 월세 (만원)
+  let priceText;
+  if (rentPrc) {
+    priceText = `${formatEok(dealPrc)} / ${rentPrc.toLocaleString()}`;
+  } else {
+    priceText = formatEok(dealPrc);
+  }
+  return {
+    articleNo: a.atclNo,
+    articleName: a.atclNm,
+    buildingName: a.bildNm || a.atclNm,
+    areaName: a.cortarNm || '',
+    tradeTypeName: tradeMap[a.tradTpCd] || a.tradTpNm || '',
+    dealOrWarrantPrc: priceText,
+    _priceManwon: dealPrc + rentPrc * 100, // 정렬용 가중치 (월세 100배)
+    floorInfo: a.flrInfo,
+    direction: a.direction,
+    area1: a.spc1,
+    area2: a.spc2,
+    articleConfirmYmd: a.atclCfmYmd,
+    tagList: a.tagList || [],
+    articleFeatureDesc: a.atclFetrDesc,
+    realtorName: a.rltrNm,
+  };
+}
+
+function formatEok(manwon) {
+  if (!manwon) return '-';
+  const eok = Math.floor(manwon / 10000);
+  const rest = manwon % 10000;
+  if (eok > 0 && rest > 0) return `${eok}억 ${rest.toLocaleString()}`;
+  if (eok > 0) return `${eok}억`;
+  return rest.toLocaleString();
 }
 
 /**
@@ -307,14 +366,23 @@ async function searchUrgent(query) {
   const collected = [];
   for (let p = 1; p <= pages; p++) {
     const data = await fetchArticles({ cortarNo, tradeType, page: p });
-    const list = Array.isArray(data.articleList) ? data.articleList : [];
-    if (list.length === 0) break;
-    collected.push(...list);
-    if (data.isMoreData === false) break;
+    // 모바일 API: { body: [...], more: true/false }
+    // 기존 API: { articleList: [...], isMoreData: true/false }
+    const rawList = Array.isArray(data.body)
+      ? data.body.map(normalizeMobileArticle)
+      : Array.isArray(data.articleList)
+      ? data.articleList
+      : [];
+    if (rawList.length === 0) break;
+    collected.push(...rawList);
+    const hasMore = data.more === true || data.isMoreData === true;
+    if (!hasMore) break;
+    // 페이지 사이 딜레이 — Rate limit 회피
+    if (p < pages) await sleep(400);
   }
 
   const enriched = collected.map((a) => {
-    const priceManwon = parseKoreanPrice(a.dealOrWarrantPrc);
+    const priceManwon = a._priceManwon || parseKoreanPrice(a.dealOrWarrantPrc);
     return {
       articleNo: a.articleNo,
       name: a.articleName,
