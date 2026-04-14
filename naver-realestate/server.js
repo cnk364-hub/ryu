@@ -303,28 +303,54 @@ function computeBbox(lat, lon, zoom = 14) {
 async function fetchArticles({ meta, cortarNo, tradeType = 'A1', page = 1 }) {
   const z = 14;
   const bbox = computeBbox(meta.lat, meta.lon, z);
-  const params = new URLSearchParams({
-    itemId: '',
-    mapKey: '',
-    lgeo: meta.lgeo || '',
-    showR0: '',
-    rletTpCd: 'APT,OPST,VL,DDDGG,JWJT', // 콤마 구분 (콜론 아님)
-    tradTpCd: tradeType,
-    z: String(z),
-    lat: String(meta.lat),
-    lon: String(meta.lon),
-    btm: String(bbox.btm),
-    top: String(bbox.top),
-    lft: String(bbox.lft),
-    rgt: String(bbox.rgt),
-    cortarNo,
-    page: String(page),
-  });
-  const url = `https://m.land.naver.com/cluster/ajax/articleList?${params.toString()}`;
-  const { json } = await fetchJsonWithRetry(url, {
-    Referer: `https://m.land.naver.com/map/${meta.lat}:${meta.lon}:${z}:${cortarNo}/A1/APT`,
-  });
-  return json || {};
+
+  // m.land 모바일 API: rletTpCd 단일 호출 (콤마 다중값이 안 먹는 케이스 대응)
+  // → 5종 타입을 순차 호출하여 합친다
+  const types = ['APT', 'OPST', 'VL', 'DDDGG', 'JWJT'];
+  const merged = { body: [], more: false };
+
+  for (const tp of types) {
+    const params = new URLSearchParams({
+      itemId: '',
+      mapKey: '',
+      lgeo: meta.lgeo || '',
+      showR0: '',
+      rletTpCd: tp,
+      tradTpCd: tradeType,
+      z: String(z),
+      lat: String(meta.lat),
+      lon: String(meta.lon),
+      btm: String(bbox.btm),
+      top: String(bbox.top),
+      lft: String(bbox.lft),
+      rgt: String(bbox.rgt),
+      cortarNo,
+      page: String(page),
+    });
+    const url = `https://m.land.naver.com/cluster/ajax/articleList?${params.toString()}`;
+
+    console.log(`[fetchArticles] page=${page} tp=${tp}`);
+    console.log(`  → ${url}`);
+
+    try {
+      const { json } = await fetchJsonWithRetry(url, {
+        Referer: `https://m.land.naver.com/map/${meta.lat}:${meta.lon}:${z}:${cortarNo}/${tradeType}/${tp}`,
+      });
+      const list = (json && json.body) || [];
+      console.log(`  ← ${list.length}건  (more=${json && json.more})`);
+      if (list.length === 0) {
+        // 디버깅용 — 빈 응답일 때 raw 출력
+        console.log('  raw=', JSON.stringify(json).slice(0, 300));
+      }
+      merged.body.push(...list);
+      if (json && json.more) merged.more = true;
+      // 타입 사이 짧은 딜레이
+      await sleep(250);
+    } catch (e) {
+      console.warn(`  ✗ ${tp} 실패:`, e.message);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -458,8 +484,10 @@ async function searchUrgent(query) {
   }
 
   const collected = [];
+  let lastRawSample = null;
   for (let p = 1; p <= pages; p++) {
     const data = await fetchArticles({ meta, cortarNo, tradeType, page: p });
+    if (p === 1) lastRawSample = JSON.stringify(data).slice(0, 400);
     // 모바일 API: { body: [...], more: true/false }
     // 기존 API: { articleList: [...], isMoreData: true/false }
     const rawList = Array.isArray(data.body)
@@ -516,6 +544,7 @@ async function searchUrgent(query) {
     totalScanned: enriched.length,
     matched: filtered.length,
     items: filtered,
+    debug: enriched.length === 0 ? { rawSample: lastRawSample } : undefined,
   };
 }
 

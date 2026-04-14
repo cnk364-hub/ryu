@@ -328,9 +328,13 @@
         `급매 조건 일치: <b style="color:#c33">${json.matched}</b>건` + metaInfo;
       if (json.totalScanned === 0) {
         $('summary').innerHTML +=
-          '<br><span style="color:#c33">⚠ 스캔된 매물이 0건입니다. ' +
-          'cortarNo 가 잘못되었거나 네이버가 일시 차단했을 수 있습니다. ' +
-          '서버 콘솔 로그를 확인하세요.</span>';
+          '<br><span style="color:#c33">⚠ 스캔된 매물이 0건입니다.</span>';
+        if (json.debug && json.debug.rawSample) {
+          $('summary').innerHTML +=
+            '<pre style="background:#f4f4f4;padding:8px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-top:8px;border-radius:4px">' +
+            'Raw 응답 샘플:\n' + json.debug.rawSample +
+            '</pre>';
+        }
       }
       const tbody = $('resultTable').querySelector('tbody');
       tbody.innerHTML = '';
