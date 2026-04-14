@@ -35,21 +35,21 @@ const MIME = {
  * 사용자가 검색이 안 될 때 빠르게 선택할 수 있도록 제공.
  */
 const REGION_PRESETS = [
-  { cortarNo: '1168010800', name: '강남구 역삼동' },
-  { cortarNo: '1168010600', name: '강남구 삼성동' },
-  { cortarNo: '1168010300', name: '강남구 압구정동' },
-  { cortarNo: '1168011000', name: '강남구 대치동' },
-  { cortarNo: '1171010100', name: '송파구 잠실동' },
-  { cortarNo: '1171010800', name: '송파구 가락동' },
-  { cortarNo: '1162010600', name: '관악구 신림동' },
-  { cortarNo: '1162010100', name: '관악구 봉천동' },
-  { cortarNo: '1144012100', name: '마포구 합정동' },
-  { cortarNo: '1144013500', name: '마포구 망원동' },
-  { cortarNo: '1135010600', name: '노원구 상계동' },
-  { cortarNo: '1126010100', name: '중랑구 면목동' },
-  { cortarNo: '1117010100', name: '용산구 후암동' },
-  { cortarNo: '1141012700', name: '서대문구 연희동' },
-  { cortarNo: '1132010600', name: '도봉구 창동' },
+  { cortarNo: '1168010800', name: '강남구 역삼동',   lat: 37.5005, lon: 127.0367 },
+  { cortarNo: '1168010600', name: '강남구 삼성동',   lat: 37.5145, lon: 127.0590 },
+  { cortarNo: '1168010300', name: '강남구 압구정동', lat: 37.5273, lon: 127.0286 },
+  { cortarNo: '1168011000', name: '강남구 대치동',   lat: 37.4946, lon: 127.0629 },
+  { cortarNo: '1171010100', name: '송파구 잠실동',   lat: 37.5111, lon: 127.0830 },
+  { cortarNo: '1171010800', name: '송파구 가락동',   lat: 37.4934, lon: 127.1170 },
+  { cortarNo: '1162010600', name: '관악구 신림동',   lat: 37.4844, lon: 126.9295 },
+  { cortarNo: '1162010100', name: '관악구 봉천동',   lat: 37.4810, lon: 126.9527 },
+  { cortarNo: '1144012100', name: '마포구 합정동',   lat: 37.5495, lon: 126.9135 },
+  { cortarNo: '1144013500', name: '마포구 망원동',   lat: 37.5559, lon: 126.9056 },
+  { cortarNo: '1135010600', name: '노원구 상계동',   lat: 37.6620, lon: 127.0760 },
+  { cortarNo: '1126010100', name: '중랑구 면목동',   lat: 37.5895, lon: 127.0876 },
+  { cortarNo: '1117010100', name: '용산구 후암동',   lat: 37.5481, lon: 126.9760 },
+  { cortarNo: '1141012700', name: '서대문구 연희동', lat: 37.5707, lon: 126.9376 },
+  { cortarNo: '1132010600', name: '도봉구 창동',     lat: 37.6533, lon: 127.0473 },
 ];
 
 function naverHeaders(extra = {}) {
@@ -212,32 +212,117 @@ async function fetchJsonWithRetry(url, headers = {}, retries = 3) {
 }
 
 /**
+ * cortarNo 로부터 좌표/lgeo 메타데이터를 조회.
+ * m.land mobile API 의 articleList 는 lat/lon/bbox 가 반드시 필요하다.
+ *
+ * 시도 순서:
+ *  1) new.land /api/regions/list?cortarNo=...  (centerLat/centerLon)
+ *  2) m.land   /search/result/{cortarNo}       (HTML 에서 lat/lon/lgeo 추출)
+ *  3) REGION_PRESETS 하드코딩 폴백
+ */
+async function lookupCortarMeta(cortarNo) {
+  // 1) new.land regions/list (가벼운 endpoint, 인증 불필요한 경우 많음)
+  try {
+    const url = `https://new.land.naver.com/api/regions/list?cortarNo=${cortarNo}`;
+    const { json } = await httpsGetJson(url);
+    const list = json && (json.regionList || json.regions || []);
+    if (Array.isArray(list) && list.length > 0) {
+      const r = list[0];
+      if (r.centerLat || r.lat) {
+        return {
+          lat: r.centerLat || r.lat,
+          lon: r.centerLon || r.lon,
+          lgeo: r.lgeoNo || r.lgeo || '',
+          name: r.cortarName,
+          source: 'new.land/regions/list',
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[meta] regions/list failed:', e.message);
+  }
+
+  // 2) m.land HTML 페이지에서 추출
+  try {
+    const { body } = await httpsGetText(
+      `https://m.land.naver.com/search/result/${cortarNo}`
+    );
+    // 패턴: "lat":37.4847,"lon":126.9295  또는  "centerLat":37.48...
+    const lat = (body.match(/"(?:centerLat|lat)"\s*:\s*([\d.]+)/) || [])[1];
+    const lon = (body.match(/"(?:centerLon|lon)"\s*:\s*([\d.]+)/) || [])[1];
+    const lgeo = (body.match(/"lgeo(?:No)?"\s*:\s*"?(\d+)"?/) || [])[1];
+    if (lat && lon) {
+      return {
+        lat: parseFloat(lat),
+        lon: parseFloat(lon),
+        lgeo: lgeo || '',
+        source: 'm.land/search-html',
+      };
+    }
+  } catch (e) {
+    console.warn('[meta] m.land html failed:', e.message);
+  }
+
+  // 3) 프리셋 폴백
+  const preset = REGION_PRESETS.find((p) => p.cortarNo === cortarNo);
+  if (preset && preset.lat) {
+    return {
+      lat: preset.lat,
+      lon: preset.lon,
+      lgeo: preset.lgeo || '',
+      name: preset.name,
+      source: 'preset',
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 중심 좌표(lat, lon) 와 zoom 으로 대략적인 bbox 계산.
+ * - zoom 14 기준 약 ±0.025° (~3km)
+ * - zoom 15 기준 약 ±0.012° (~1.5km)
+ */
+function computeBbox(lat, lon, zoom = 14) {
+  const span = 0.4 / Math.pow(2, zoom - 11); // zoom 11 ≈ ±0.4°
+  return {
+    btm: lat - span,
+    top: lat + span,
+    lft: lon - span,
+    rgt: lon + span,
+  };
+}
+
+/**
  * 매물 목록 조회 — 모바일(m.land) 엔드포인트 사용.
  *
  * new.land.naver.com/api/articles 는 JWT Authorization 헤더 없이는
- * 즉시 429 (Rate limit) 를 반환한다. 모바일 m.land 의 cluster/ajax/articleList
- * 는 인증 없이도 호출 가능하다.
- *
- * @param {Object} opts
- * @param {string} opts.cortarNo  지역코드 (10자리)
- * @param {string} opts.tradeType A1=매매, B1=전세, B2=월세
- * @param {number} opts.page
+ * 즉시 429 를 반환하므로 m.land cluster/ajax/articleList 사용.
+ * 단, 좌표(lat/lon)와 bbox(btm/top/lft/rgt)가 반드시 필요하다.
  */
-async function fetchArticles({ cortarNo, tradeType = 'A1', page = 1 }) {
+async function fetchArticles({ meta, cortarNo, tradeType = 'A1', page = 1 }) {
+  const z = 14;
+  const bbox = computeBbox(meta.lat, meta.lon, z);
   const params = new URLSearchParams({
     itemId: '',
     mapKey: '',
-    lgeo: '',
+    lgeo: meta.lgeo || '',
     showR0: '',
-    rletTpCd: 'APT:OPST:VL:DDDGG:JWJT',
+    rletTpCd: 'APT,OPST,VL,DDDGG,JWJT', // 콤마 구분 (콜론 아님)
     tradTpCd: tradeType,
-    z: '15',
+    z: String(z),
+    lat: String(meta.lat),
+    lon: String(meta.lon),
+    btm: String(bbox.btm),
+    top: String(bbox.top),
+    lft: String(bbox.lft),
+    rgt: String(bbox.rgt),
     cortarNo,
     page: String(page),
   });
   const url = `https://m.land.naver.com/cluster/ajax/articleList?${params.toString()}`;
   const { json } = await fetchJsonWithRetry(url, {
-    Referer: `https://m.land.naver.com/map/0:0:15/A1/${cortarNo}`,
+    Referer: `https://m.land.naver.com/map/${meta.lat}:${meta.lon}:${z}:${cortarNo}/A1/APT`,
   });
   return json || {};
 }
@@ -363,9 +448,18 @@ async function searchUrgent(query) {
   const multiOwnerOnly = query.get('multiOwnerOnly') === '1';
   const pages = Math.min(parseInt(query.get('pages') || '3', 10), 10);
 
+  // 좌표/lgeo 메타데이터 사전 조회
+  const meta = await lookupCortarMeta(cortarNo);
+  if (!meta) {
+    throw new Error(
+      `cortarNo=${cortarNo} 의 좌표 정보를 찾을 수 없습니다. ` +
+      `다른 지역으로 시도하거나 프리셋을 사용하세요.`
+    );
+  }
+
   const collected = [];
   for (let p = 1; p <= pages; p++) {
-    const data = await fetchArticles({ cortarNo, tradeType, page: p });
+    const data = await fetchArticles({ meta, cortarNo, tradeType, page: p });
     // 모바일 API: { body: [...], more: true/false }
     // 기존 API: { articleList: [...], isMoreData: true/false }
     const rawList = Array.isArray(data.body)
@@ -418,6 +512,7 @@ async function searchUrgent(query) {
   return {
     cortarNo,
     tradeType,
+    meta: { lat: meta.lat, lon: meta.lon, lgeo: meta.lgeo, source: meta.source },
     totalScanned: enriched.length,
     matched: filtered.length,
     items: filtered,
