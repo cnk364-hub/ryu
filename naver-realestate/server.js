@@ -30,6 +30,28 @@ const MIME = {
  * 네이버 부동산 호출 시 사용하는 기본 헤더.
  * User-Agent 와 Referer 가 없으면 차단되는 경우가 많다.
  */
+/**
+ * 자주 쓰이는 서울 주요 동/구 cortarNo 프리셋.
+ * 사용자가 검색이 안 될 때 빠르게 선택할 수 있도록 제공.
+ */
+const REGION_PRESETS = [
+  { cortarNo: '1168010800', name: '강남구 역삼동' },
+  { cortarNo: '1168010600', name: '강남구 삼성동' },
+  { cortarNo: '1168010300', name: '강남구 압구정동' },
+  { cortarNo: '1168011000', name: '강남구 대치동' },
+  { cortarNo: '1171010100', name: '송파구 잠실동' },
+  { cortarNo: '1171010800', name: '송파구 가락동' },
+  { cortarNo: '1162010600', name: '관악구 신림동' },
+  { cortarNo: '1162010100', name: '관악구 봉천동' },
+  { cortarNo: '1144012100', name: '마포구 합정동' },
+  { cortarNo: '1144013500', name: '마포구 망원동' },
+  { cortarNo: '1135010600', name: '노원구 상계동' },
+  { cortarNo: '1126010100', name: '중랑구 면목동' },
+  { cortarNo: '1117010100', name: '용산구 후암동' },
+  { cortarNo: '1141012700', name: '서대문구 연희동' },
+  { cortarNo: '1132010600', name: '도봉구 창동' },
+];
+
 function naverHeaders(extra = {}) {
   return {
     'User-Agent':
@@ -84,16 +106,100 @@ function httpsGetJson(targetUrl, headers = {}) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * https.request 를 Promise 로 감싼 헬퍼 (HTML 응답용).
+ */
+function httpsGetText(targetUrl, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(targetUrl);
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: naverHeaders(headers),
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode,
+            body: Buffer.concat(chunks).toString('utf-8'),
+            location: res.headers.location,
+          });
+        });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(10_000, () => req.destroy(new Error('Naver timeout')));
+    req.end();
+  });
+}
+
+/**
  * 지역 검색: 키워드 → cortarNo (지역코드) 후보 목록.
- * 네이버 통합검색의 region 자동완성을 사용한다.
+ *
+ * 네이버 부동산은 공식 검색 API가 없어서 여러 경로를 순차로 시도한다:
+ *   1) new.land.naver.com/api/search   (간헐적으로 동작)
+ *   2) m.land.naver.com/search/result  (HTML 에서 cortarNo 추출)
  */
 async function searchRegion(keyword) {
-  const url = `https://new.land.naver.com/api/search?keyword=${encodeURIComponent(
-    keyword
-  )}&page=1`;
-  const { json } = await httpsGetJson(url);
-  // json.regions 가 없는 경우 빈 배열 반환
-  return (json && json.regions) || [];
+  const results = [];
+
+  // 1) new.land 검색 API
+  try {
+    const url = `https://new.land.naver.com/api/search?keyword=${encodeURIComponent(
+      keyword
+    )}&page=1`;
+    const { json } = await httpsGetJson(url);
+    if (json && Array.isArray(json.regions)) {
+      json.regions.forEach((r) => {
+        results.push({
+          cortarNo: r.cortarNo || r.regionCode,
+          name: [r.cortarName, r.cortarAddress].filter(Boolean).join(' '),
+          source: 'new.land/api/search',
+        });
+      });
+    }
+  } catch (e) {
+    console.warn('[region] new.land search failed:', e.message);
+  }
+
+  // 2) m.land HTML 페이지에서 추출 (가장 신뢰성 높음)
+  if (results.length === 0) {
+    try {
+      const url = `https://m.land.naver.com/search/result/${encodeURIComponent(
+        keyword
+      )}`;
+      const { body } = await httpsGetText(url);
+      // body 안에서 cortarNo / lgeo 패턴 추출
+      // 예: "cortarNo":"1162010600","cortarName":"신림동"
+      const re = /"cortarNo"\s*:\s*"(\d{10})"[^}]*?"cortarName"\s*:\s*"([^"]+)"/g;
+      const seen = new Set();
+      let m;
+      while ((m = re.exec(body)) !== null) {
+        const cortarNo = m[1];
+        const name = m[2];
+        if (seen.has(cortarNo)) continue;
+        seen.add(cortarNo);
+        results.push({ cortarNo, name, source: 'm.land/search' });
+      }
+      // 또 다른 패턴: dongName / cortarName 단독
+      if (results.length === 0) {
+        const re2 = /cortarNo=(\d{10})[^"']*[^>]*>([^<]{1,30})</g;
+        while ((m = re2.exec(body)) !== null) {
+          const cortarNo = m[1];
+          if (seen.has(cortarNo)) continue;
+          seen.add(cortarNo);
+          results.push({ cortarNo, name: m[2].trim(), source: 'm.land/html' });
+        }
+      }
+    } catch (e) {
+      console.warn('[region] m.land search failed:', e.message);
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -292,7 +398,11 @@ const server = http.createServer(async (req, res) => {
       const keyword = url.searchParams.get('q') || '';
       if (!keyword) return sendJson(res, 400, { error: 'q is required' });
       const regions = await searchRegion(keyword);
-      return sendJson(res, 200, { regions });
+      return sendJson(res, 200, { regions, count: regions.length });
+    }
+
+    if (url.pathname === '/api/presets' && req.method === 'GET') {
+      return sendJson(res, 200, { presets: REGION_PRESETS });
     }
 
     if (url.pathname === '/api/search-urgent' && req.method === 'GET') {

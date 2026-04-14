@@ -115,17 +115,45 @@
     <!-- 지역 선택 -->
     <section class="card">
       <h3 style="margin-top:0">1. 지역 선택</h3>
+
+      <!-- 방법 A: 키워드 검색 -->
       <div class="row-actions">
         <div style="flex:1">
-          <label>지역 키워드 (예: 강남구, 잠실동, 마포구 합정동)</label>
-          <input id="regionQuery" type="text" placeholder="예) 강남구 역삼동" />
+          <label>방법 A — 지역 키워드 검색 (예: 강남구, 잠실동)</label>
+          <input id="regionQuery" type="text" placeholder="예) 신림동" />
         </div>
         <div style="width:120px">
           <button id="btnRegion">검색</button>
         </div>
       </div>
       <div id="regionResults" class="region-results" hidden></div>
-      <div id="selectedRegion" class="muted" style="margin-top:8px"></div>
+
+      <!-- 방법 B: 프리셋 -->
+      <div style="margin-top:14px">
+        <label>방법 B — 자주 찾는 지역 (서울 주요 동)</label>
+        <select id="presetSelect">
+          <option value="">— 선택 —</option>
+        </select>
+      </div>
+
+      <!-- 방법 C: 직접 입력 -->
+      <div style="margin-top:14px">
+        <label>방법 C — cortarNo 직접 입력 (10자리)</label>
+        <div class="row-actions">
+          <div style="flex:1">
+            <input id="cortarManual" type="text" placeholder="예) 1162010600" maxlength="10" />
+          </div>
+          <div style="width:120px">
+            <button id="btnManual">적용</button>
+          </div>
+        </div>
+        <p class="muted" style="margin-top:6px">
+          💡 cortarNo 찾는 법: <a href="https://new.land.naver.com/" target="_blank">new.land.naver.com</a> 에서
+          원하는 지역까지 지도를 이동하면 URL 의 마지막 10자리 숫자가 cortarNo 입니다.
+        </p>
+      </div>
+
+      <div id="selectedRegion" class="muted" style="margin-top:12px; padding:8px; background:#f0fff5; border-radius:6px"></div>
     </section>
 
     <!-- 검색 조건 -->
@@ -198,30 +226,36 @@
 
     const $ = (id) => document.getElementById(id);
 
+    function selectRegion(cortarNo, name) {
+      selectedCortarNo = cortarNo;
+      $('selectedRegion').textContent =
+        '✅ 선택: ' + (name || '(직접 입력)') + ' / cortarNo=' + cortarNo;
+      $('btnSearch').disabled = !cortarNo;
+    }
+
     async function searchRegion() {
       const q = $('regionQuery').value.trim();
       if (!q) return;
       const box = $('regionResults');
-      box.innerHTML = '검색 중...';
+      box.innerHTML = '<div class="muted" style="padding:8px">검색 중...</div>';
       box.hidden = false;
       try {
         const res = await fetch('/api/region?q=' + encodeURIComponent(q));
         const json = await res.json();
         const regions = json.regions || [];
         if (regions.length === 0) {
-          box.innerHTML = '<div class="muted" style="padding:8px">결과가 없습니다.</div>';
+          box.innerHTML =
+            '<div class="muted" style="padding:8px">' +
+            '결과가 없습니다. 방법 B(프리셋) 또는 방법 C(직접 입력)를 사용하세요.' +
+            '</div>';
           return;
         }
         box.innerHTML = '';
         regions.forEach((r) => {
           const div = document.createElement('div');
-          const name = [r.cortarName, r.cortarAddress, r.cityName, r.divisionName, r.sectionName]
-            .filter(Boolean).join(' · ');
-          div.textContent = `${name}  (cortarNo: ${r.cortarNo || r.regionCode || '-'})`;
+          div.textContent = `${r.name}  (cortarNo: ${r.cortarNo})  [${r.source}]`;
           div.onclick = () => {
-            selectedCortarNo = r.cortarNo || r.regionCode;
-            $('selectedRegion').textContent = '✅ 선택: ' + name + ' / cortarNo=' + selectedCortarNo;
-            $('btnSearch').disabled = !selectedCortarNo;
+            selectRegion(r.cortarNo, r.name);
             box.hidden = true;
           };
           box.appendChild(div);
@@ -229,6 +263,26 @@
       } catch (e) {
         box.innerHTML = '<div style="padding:8px;color:#c33">에러: ' + e.message + '</div>';
       }
+    }
+
+    async function loadPresets() {
+      try {
+        const res = await fetch('/api/presets');
+        const json = await res.json();
+        const sel = $('presetSelect');
+        (json.presets || []).forEach((p) => {
+          const opt = document.createElement('option');
+          opt.value = p.cortarNo;
+          opt.dataset.name = p.name;
+          opt.textContent = `${p.name}  (${p.cortarNo})`;
+          sel.appendChild(opt);
+        });
+        sel.onchange = () => {
+          if (!sel.value) return;
+          const name = sel.options[sel.selectedIndex].dataset.name;
+          selectRegion(sel.value, name);
+        };
+      } catch {}
     }
 
     async function searchUrgent() {
@@ -298,7 +352,19 @@
     $('regionQuery').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') searchRegion();
     });
+    $('btnManual').onclick = () => {
+      const v = $('cortarManual').value.trim();
+      if (!/^\d{10}$/.test(v)) {
+        alert('cortarNo 는 10자리 숫자여야 합니다.');
+        return;
+      }
+      selectRegion(v, '직접 입력 ' + v);
+    };
+    $('cortarManual').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') $('btnManual').click();
+    });
     $('btnSearch').onclick = searchUrgent;
+    loadPresets();
   </script>
 </body>
 </html>
