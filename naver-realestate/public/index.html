@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>네이버 부동산 급매 검색기</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+                   "맑은 고딕", sans-serif;
+      background: #f6f7fb;
+      color: #222;
+    }
+    header {
+      background: #03c75a;
+      color: #fff;
+      padding: 16px 24px;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 4px 0 0; font-size: 13px; opacity: 0.9; }
+
+    main {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      margin-bottom: 16px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    label { font-size: 12px; color: #555; display: block; margin-bottom: 4px; }
+    input, select, button {
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 14px;
+      border: 1px solid #d0d4dc;
+      border-radius: 6px;
+      background: #fff;
+    }
+    button {
+      background: #03c75a;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { background: #02a849; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+
+    .region-results {
+      margin-top: 8px;
+      max-height: 160px;
+      overflow-y: auto;
+      border: 1px solid #eee;
+      border-radius: 6px;
+    }
+    .region-results div {
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 1px solid #f1f1f1;
+    }
+    .region-results div:hover { background: #f0fff5; }
+
+    .summary {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+    th { background: #fafafa; font-weight: 600; color: #444; }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-right: 4px;
+    }
+    .badge-urgent { background: #ffe7e7; color: #c33; }
+    .badge-multi  { background: #fff5cc; color: #a06b00; }
+    .price { font-weight: 600; color: #c33; white-space: nowrap; }
+    .muted { color: #888; font-size: 12px; }
+    a { color: #03c75a; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .row-actions { display: flex; gap: 8px; align-items: end; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏠 네이버 부동산 급매 검색기</h1>
+    <p>다주택자 매물 · 급매 · 가격대별 필터링 (비공식 API · 학습용)</p>
+  </header>
+
+  <main>
+    <!-- 지역 선택 -->
+    <section class="card">
+      <h3 style="margin-top:0">1. 지역 선택</h3>
+      <div class="row-actions">
+        <div style="flex:1">
+          <label>지역 키워드 (예: 강남구, 잠실동, 마포구 합정동)</label>
+          <input id="regionQuery" type="text" placeholder="예) 강남구 역삼동" />
+        </div>
+        <div style="width:120px">
+          <button id="btnRegion">검색</button>
+        </div>
+      </div>
+      <div id="regionResults" class="region-results" hidden></div>
+      <div id="selectedRegion" class="muted" style="margin-top:8px"></div>
+    </section>
+
+    <!-- 검색 조건 -->
+    <section class="card">
+      <h3 style="margin-top:0">2. 검색 조건</h3>
+      <div class="grid">
+        <div>
+          <label>거래 유형</label>
+          <select id="tradeType">
+            <option value="A1">매매</option>
+            <option value="B1">전세</option>
+            <option value="B2">월세</option>
+          </select>
+        </div>
+        <div>
+          <label>최소 가격 (만원)</label>
+          <input id="minPrice" type="number" placeholder="0" />
+        </div>
+        <div>
+          <label>최대 가격 (만원)</label>
+          <input id="maxPrice" type="number" placeholder="100000" />
+        </div>
+        <div>
+          <label>스캔 페이지 수 (1~10)</label>
+          <input id="pages" type="number" value="3" min="1" max="10" />
+        </div>
+        <div>
+          <label>다주택자 키워드만</label>
+          <select id="multiOwnerOnly">
+            <option value="0">아니오</option>
+            <option value="1">예 (갭/임대/투자 키워드)</option>
+          </select>
+        </div>
+        <div style="display:flex; align-items:end">
+          <button id="btnSearch" disabled>🔍 급매 검색</button>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:10px">
+        💡 “급매” 판정 키워드: 급매 · 급급매 · 급처분 · 초급매 · 시세이하 · 특가 등
+        <br>💡 “다주택자” 판정 키워드: 갭투자 · 전세끼고 · 임대중 · 임차인 · 투자 등
+        (네이버 부동산은 소유자 정보를 노출하지 않으므로 휴리스틱 추정)
+      </p>
+    </section>
+
+    <!-- 결과 -->
+    <section class="card">
+      <h3 style="margin-top:0">3. 검색 결과</h3>
+      <div id="summary" class="summary">검색을 시작해 주세요.</div>
+      <div style="overflow-x:auto">
+        <table id="resultTable" hidden>
+          <thead>
+            <tr>
+              <th>단지/매물</th>
+              <th>거래</th>
+              <th>가격</th>
+              <th>면적/층</th>
+              <th>특징</th>
+              <th>중개사</th>
+              <th>링크</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let selectedCortarNo = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    async function searchRegion() {
+      const q = $('regionQuery').value.trim();
+      if (!q) return;
+      const box = $('regionResults');
+      box.innerHTML = '검색 중...';
+      box.hidden = false;
+      try {
+        const res = await fetch('/api/region?q=' + encodeURIComponent(q));
+        const json = await res.json();
+        const regions = json.regions || [];
+        if (regions.length === 0) {
+          box.innerHTML = '<div class="muted" style="padding:8px">결과가 없습니다.</div>';
+          return;
+        }
+        box.innerHTML = '';
+        regions.forEach((r) => {
+          const div = document.createElement('div');
+          const name = [r.cortarName, r.cortarAddress, r.cityName, r.divisionName, r.sectionName]
+            .filter(Boolean).join(' · ');
+          div.textContent = `${name}  (cortarNo: ${r.cortarNo || r.regionCode || '-'})`;
+          div.onclick = () => {
+            selectedCortarNo = r.cortarNo || r.regionCode;
+            $('selectedRegion').textContent = '✅ 선택: ' + name + ' / cortarNo=' + selectedCortarNo;
+            $('btnSearch').disabled = !selectedCortarNo;
+            box.hidden = true;
+          };
+          box.appendChild(div);
+        });
+      } catch (e) {
+        box.innerHTML = '<div style="padding:8px;color:#c33">에러: ' + e.message + '</div>';
+      }
+    }
+
+    async function searchUrgent() {
+      if (!selectedCortarNo) return;
+      const params = new URLSearchParams({
+        cortarNo: selectedCortarNo,
+        tradeType: $('tradeType').value,
+        minPrice: $('minPrice').value || '0',
+        maxPrice: $('maxPrice').value || '999999999',
+        pages: $('pages').value || '3',
+        multiOwnerOnly: $('multiOwnerOnly').value,
+      });
+      $('summary').textContent = '검색 중...';
+      $('resultTable').hidden = true;
+      $('btnSearch').disabled = true;
+      try {
+        const res = await fetch('/api/search-urgent?' + params.toString());
+        const json = await res.json();
+        if (json.error) throw new Error(json.error);
+        renderResults(json);
+      } catch (e) {
+        $('summary').innerHTML = '<span style="color:#c33">에러: ' + e.message + '</span>';
+      } finally {
+        $('btnSearch').disabled = false;
+      }
+    }
+
+    function fmtPrice(manwon) {
+      if (!manwon) return '-';
+      const eok = Math.floor(manwon / 10000);
+      const rest = manwon % 10000;
+      if (eok > 0 && rest > 0) return `${eok}억 ${rest.toLocaleString()}만`;
+      if (eok > 0) return `${eok}억`;
+      return `${rest.toLocaleString()}만`;
+    }
+
+    function renderResults(json) {
+      $('summary').innerHTML =
+        `총 스캔 매물: <b>${json.totalScanned}</b>건 / ` +
+        `급매 조건 일치: <b style="color:#c33">${json.matched}</b>건`;
+      const tbody = $('resultTable').querySelector('tbody');
+      tbody.innerHTML = '';
+      json.items.forEach((it) => {
+        const tr = document.createElement('tr');
+        const badges =
+          (it.isUrgent ? '<span class="badge badge-urgent">급매</span>' : '') +
+          (it.isMultiOwner ? '<span class="badge badge-multi">다주택의심</span>' : '');
+        tr.innerHTML = `
+          <td>
+            <div><b>${it.buildingName || it.name || '-'}</b></div>
+            <div class="muted">${it.areaName || ''}</div>
+            ${badges}
+          </td>
+          <td>${it.tradeType || '-'}</td>
+          <td class="price">${it.priceText || '-'}<div class="muted">${fmtPrice(it.priceManwon)}</div></td>
+          <td>${it.area2 || it.area1 || '-'}㎡<div class="muted">${it.floor || ''} ${it.direction || ''}</div></td>
+          <td>${(it.featureDesc || '').slice(0, 80) || '-'}<div class="muted">${(it.tags || []).join(', ')}</div></td>
+          <td>${it.realtorName || '-'}<div class="muted">${it.confirmDate || ''}</div></td>
+          <td><a href="${it.detailUrl}" target="_blank" rel="noopener">상세</a></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      $('resultTable').hidden = json.items.length === 0;
+    }
+
+    $('btnRegion').onclick = searchRegion;
+    $('regionQuery').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') searchRegion();
+    });
+    $('btnSearch').onclick = searchUrgent;
+  </script>
+</body>
+</html>

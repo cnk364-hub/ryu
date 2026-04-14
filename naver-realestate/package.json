@@ -1,0 +1,22 @@
+{
+  "name": "naver-realestate-search",
+  "version": "0.1.0",
+  "private": true,
+  "description": "네이버 부동산 다주택자 급매 매물 가격대별 검색 도구",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "naver",
+    "realestate",
+    "korea",
+    "급매",
+    "부동산"
+  ],
+  "license": "MIT"
+}
