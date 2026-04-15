@@ -187,13 +187,67 @@
     }
   });
 
-  // ---- 테스트 버튼 --------------------------------------------------------
+  // ---- 부분 저장 --------------------------------------------------------
+  async function saveAccountFields(keys) {
+    const form = document.getElementById("formAccount");
+    const fd = new FormData(form);
+    const payload = {};
+    keys.forEach((k) => {
+      const v = fd.get(k);
+      if (v !== null) payload[k] = v;
+    });
+    return api("/api/settings/account", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  document.getElementById("btnSaveSrt").addEventListener("click", async () => {
+    haptic();
+    showSpinner(true);
+    try {
+      const r = await saveAccountFields(["srt_id", "srt_password"]);
+      showToast(r.message || "SRT 계정 저장됨", "success");
+      document.getElementById("srtPw").value = "";
+      await loadSettings();
+    } catch (err) {
+      showToast("저장 실패: " + err.message, "danger");
+    } finally {
+      showSpinner(false);
+    }
+  });
+
+  document.getElementById("btnSaveKakao").addEventListener("click", async () => {
+    haptic();
+    showSpinner(true);
+    try {
+      const r = await saveAccountFields([
+        "kakao_rest_api_key",
+        "kakao_access_token",
+        "kakao_refresh_token",
+      ]);
+      showToast(r.message || "카카오 설정 저장됨", "success");
+      document.querySelector('[name="kakao_access_token"]').value = "";
+      document.querySelector('[name="kakao_refresh_token"]').value = "";
+      await loadSettings();
+    } catch (err) {
+      showToast("저장 실패: " + err.message, "danger");
+    } finally {
+      showSpinner(false);
+    }
+  });
+
+  // ---- 테스트 버튼 (저장 후 실행) ------------------------------------------
   document.getElementById("btnTestLogin").addEventListener("click", async () => {
     haptic();
     showSpinner(true);
     try {
+      // 현재 폼의 값이 있으면 먼저 저장
+      await saveAccountFields(["srt_id", "srt_password"]);
+      document.getElementById("srtPw").value = "";
       const r = await api("/api/test/srt-login", { method: "POST" });
       showToast(r.message, r.ok ? "success" : "danger");
+      await loadSettings();
     } catch (err) {
       showToast("요청 실패: " + err.message, "danger");
     } finally {
@@ -204,8 +258,16 @@
     haptic();
     showSpinner(true);
     try {
+      await saveAccountFields([
+        "kakao_rest_api_key",
+        "kakao_access_token",
+        "kakao_refresh_token",
+      ]);
+      document.querySelector('[name="kakao_access_token"]').value = "";
+      document.querySelector('[name="kakao_refresh_token"]').value = "";
       const r = await api("/api/test/kakao", { method: "POST" });
       showToast(r.message, r.ok ? "success" : "danger");
+      await loadSettings();
     } catch (err) {
       showToast("요청 실패: " + err.message, "danger");
     } finally {

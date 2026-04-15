@@ -117,7 +117,10 @@
               </div>
               <div class="form-text" id="srtPwHint">저장된 비밀번호가 없습니다.</div>
             </div>
-            <button type="button" class="btn btn-outline-info" id="btnTestLogin">SRT 로그인 테스트</button>
+            <div class="d-grid gap-2">
+              <button type="button" class="btn btn-primary btn-hapt" id="btnSaveSrt">💾 SRT 계정 저장</button>
+              <button type="button" class="btn btn-outline-info btn-hapt" id="btnTestLogin">SRT 로그인 테스트 (저장 후)</button>
+            </div>
           </div>
 
           <div class="card card-dark p-3">
@@ -136,10 +139,13 @@
               <input type="password" class="form-control" name="kakao_refresh_token" />
               <div class="form-text" id="kakaoRtHint">저장된 값이 없습니다.</div>
             </div>
-            <button type="button" class="btn btn-outline-info" id="btnTestKakao">카카오 테스트 메시지</button>
+            <div class="d-grid gap-2">
+              <button type="button" class="btn btn-primary btn-hapt" id="btnSaveKakao">💾 카카오 설정 저장</button>
+              <button type="button" class="btn btn-outline-info btn-hapt" id="btnTestKakao">카카오 테스트 메시지 (저장 후)</button>
+            </div>
           </div>
 
-          <button type="submit" class="btn btn-primary btn-lg btn-hapt">계정 정보 저장</button>
+          <button type="submit" class="btn btn-success btn-lg btn-hapt">✅ 전체 저장</button>
         </form>
       </section>
 
