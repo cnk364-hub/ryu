@@ -9,8 +9,11 @@
         if (body !== undefined) opts.body = JSON.stringify(body);
         const r = await fetch(url, opts);
         if (!r.ok) {
-            let msg = `${r.status}`;
-            try { msg = (await r.json()).detail || msg; } catch (e) {}
+            let msg = `HTTP ${r.status}`;
+            try {
+                const body = await r.json();
+                msg = body.detail || body.message || msg;
+            } catch (e) { /* ignore */ }
             throw new Error(msg);
         }
         if (r.status === 204) return null;
