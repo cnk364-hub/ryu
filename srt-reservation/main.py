@@ -8,6 +8,7 @@ import os
 import socket
 import threading
 import webbrowser
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -31,26 +32,39 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="SRT 자동예약")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-
-@app.on_event("startup")
-async def on_startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     db.init_db()
     # 엔진 로그버스를 메인 이벤트루프에 바인딩 (스레드 → asyncio 큐 전달용)
     engine.log_bus.bind_loop(asyncio.get_running_loop())
     logger.info("앱 시작 완료")
+    yield
+    logger.info("앱 종료")
+
+
+app = FastAPI(title="SRT 자동예약", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Python 3.14 + Jinja2 3.1.x LRUCache 호환성 이슈 우회: 캐시 비활성화
+try:
+    templates.env.cache = None
+except Exception:  # pragma: no cover - 환경에 따라 속성 접근 실패 가능
+    pass
 
 
 # ---- 페이지 ------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "stations": SRT_STATIONS},
-    )
+    # starlette 신/구 시그니처 호환
+    try:
+        return templates.TemplateResponse(
+            request, "index.html", {"stations": SRT_STATIONS}
+        )
+    except TypeError:
+        return templates.TemplateResponse(
+            "index.html", {"request": request, "stations": SRT_STATIONS}
+        )
 
 
 # ---- 상태/제어 ----------------------------------------------------------------
