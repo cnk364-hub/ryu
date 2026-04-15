@@ -1,0 +1,5 @@
+srtrain @ git+https://github.com/ryanking13/SRT.git
+korail2
+schedule
+requests
+keyring

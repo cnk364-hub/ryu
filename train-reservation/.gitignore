@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 가상환경
+venv/
+.venv/
+env/
+ENV/
+
+# 로그
+*.log
+train_reserve.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 환경 변수
+.env
+.env.local
+
+# 빌드 아티팩트
+build/
+dist/
+*.egg-info/
