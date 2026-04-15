@@ -32,3 +32,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# ktx-reservation runtime artifacts
+ktx-reservation/*.db
+ktx-reservation/*.db-wal
+ktx-reservation/*.db-shm
+ktx-reservation/.fernet.key
