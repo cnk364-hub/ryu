@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+SRTrain
+requests
+python-multipart
+websockets
+cryptography
+jinja2
+aiofiles
