@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
+import secrets
 import socket
 import threading
 import webbrowser
@@ -13,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import database as db
 from engine import LOG_FILE, engine
@@ -33,17 +36,65 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
 
+# ---- HTTP Basic 인증 ---------------------------------------------------------
+def _auth_enabled() -> bool:
+    return bool(os.environ.get("APP_PASSWORD"))
+
+
+def _auth_user() -> str:
+    return os.environ.get("APP_USERNAME", "admin")
+
+
+def _check_basic_auth(header_value: str) -> bool:
+    """Authorization: Basic xxx 헤더 검증."""
+    if not header_value.lower().startswith("basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header_value[6:].strip()).decode("utf-8")
+        user, _, pw = decoded.partition(":")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    expected_user = _auth_user().encode("utf-8")
+    expected_pw = (os.environ.get("APP_PASSWORD") or "").encode("utf-8")
+    return secrets.compare_digest(user.encode("utf-8"), expected_user) and secrets.compare_digest(
+        pw.encode("utf-8"), expected_pw
+    )
+
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not _auth_enabled():
+            return await call_next(request)
+        # 헬스체크/업타임 모니터링용 엔드포인트는 예외
+        if request.url.path in ("/healthz",):
+            return await call_next(request)
+        auth = request.headers.get("authorization", "")
+        if _check_basic_auth(auth):
+            return await call_next(request)
+        return Response(
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="SRT Auto-Booking"'},
+            content="Authentication required",
+            media_type="text/plain",
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
     # 엔진 로그버스를 메인 이벤트루프에 바인딩 (스레드 → asyncio 큐 전달용)
     engine.log_bus.bind_loop(asyncio.get_running_loop())
+    if _auth_enabled():
+        logger.info("HTTP Basic 인증 활성화: user=%s", _auth_user())
+    else:
+        logger.warning("APP_PASSWORD 미설정 — 인증 비활성화 (로컬 개발용)")
     logger.info("앱 시작 완료")
     yield
     logger.info("앱 종료")
 
 
 app = FastAPI(title="SRT 자동예약", lifespan=lifespan)
+app.add_middleware(BasicAuthMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Python 3.14 + Jinja2 3.1.x LRUCache 호환성 이슈 우회: 캐시 비활성화
@@ -51,6 +102,12 @@ try:
     templates.env.cache = None
 except Exception:  # pragma: no cover - 환경에 따라 속성 접근 실패 가능
     pass
+
+
+# ---- 헬스체크 (Fly.io 등) ----------------------------------------------------
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 
 # ---- 페이지 ------------------------------------------------------------------
@@ -218,6 +275,12 @@ async def api_logs_download():
 # ---- WebSocket (실시간 로그) --------------------------------------------------
 @app.websocket("/ws/logs")
 async def ws_logs(ws: WebSocket):
+    # WebSocket 은 HTTP 미들웨어를 거치지 않으므로 여기서 직접 Basic Auth 검증
+    if _auth_enabled():
+        auth = ws.headers.get("authorization", "")
+        if not _check_basic_auth(auth):
+            await ws.close(code=1008)  # policy violation
+            return
     await ws.accept()
     q = engine.log_bus.subscribe()
     try:

@@ -133,6 +133,125 @@ srt-reservation/
 | WebSocket 끊김 | 프론트에서 3초 뒤 자동 재접속 |
 | 휴대폰 접속 안 됨 | PC 방화벽에서 8000번 포트 허용, 같은 WiFi 확인 |
 
+## 🔐 HTTP Basic 인증 (공개 배포 시 필수)
+
+환경변수 `APP_PASSWORD` 를 설정하면 **모든 요청에 HTTP Basic 인증**이 걸립니다.
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `APP_USERNAME` | `admin` | 로그인 ID |
+| `APP_PASSWORD` | *(없음)* | 설정되면 인증 활성화. 미설정이면 누구나 접근 가능(로컬 전용) |
+
+로컬 실행 시도 다음처럼 활성화 가능:
+
+```powershell
+$env:APP_USERNAME="myid"
+$env:APP_PASSWORD="mysecret123"
+python main.py
+```
+
+접속 시 브라우저가 ID/비밀번호를 요구합니다. WebSocket (`/ws/logs`) 도 동일한 인증 적용.
+
+> ⚠️ 공개 URL (Fly.io, Cloudflare Tunnel 등) 로 배포할 때는 **반드시** `APP_PASSWORD` 를 설정하세요. 미설정 시 누구나 접근해 SRT 예약을 실행할 수 있습니다.
+
+---
+
+## ☁️ Fly.io 배포 가이드
+
+PC를 24시간 켜두지 않아도 되도록 Fly.io 에 배포하는 방법입니다.
+
+### 0) 준비물
+- Fly.io 계정 (https://fly.io/app/sign-up) — 카드 등록 필요하지만 **월 $5 크레딧 안에서 무료**
+- Docker Desktop 설치 불필요 (Fly는 원격 빌드 지원)
+
+### 1) flyctl 설치
+
+**Windows (PowerShell):**
+```powershell
+iwr https://fly.io/install.ps1 -useb | iex
+# 새 PowerShell 창을 연 뒤
+fly version
+```
+
+**macOS:**
+```bash
+brew install flyctl
+```
+
+### 2) 로그인
+
+```bash
+fly auth login
+```
+
+### 3) 앱 생성 (최초 1회)
+
+`srt-reservation/` 디렉터리로 이동한 뒤:
+
+```bash
+fly launch --no-deploy --copy-config --name <원하는-고유이름> --region nrt
+```
+- `<원하는-고유이름>` 은 전 세계에서 고유해야 합니다. 예: `srt-gildong-2026`
+- Postgres/Redis 추가 여부를 묻는 질문은 모두 **No**
+
+만들어진 `fly.toml` 의 `app` 값이 입력한 이름으로 바뀌는지 확인하세요.
+
+### 4) 영속 볼륨 생성 (SQLite/키/로그 저장용)
+
+```bash
+fly volumes create srt_data --region nrt --size 1
+```
+- 1GB 로 충분합니다.
+
+### 5) 환경변수(Secrets) 등록
+
+```bash
+fly secrets set APP_USERNAME="myid" APP_PASSWORD="StrongPassword123!"
+```
+
+### 6) 배포
+
+```bash
+fly deploy
+```
+
+빌드·푸시·배포가 자동으로 진행됩니다 (3~5분).
+
+완료되면 URL 이 표시됩니다:
+```
+https://<원하는-고유이름>.fly.dev
+```
+
+### 7) 접속
+
+브라우저에서 위 URL 에 접속하면 ID/비밀번호 입력창이 뜨고, 맞추면 앱이 열립니다.
+
+### 8) 로그 확인 / 재배포 / 접속
+
+```bash
+fly logs                       # 실시간 로그
+fly deploy                     # 코드 수정 후 재배포
+fly ssh console                # 컨테이너 쉘 접속 (data 디렉터리 확인 등)
+fly machine status             # 머신 상태
+```
+
+### 9) 비용 관리 팁
+
+- 무료 크레딧($5/월) 내에서 `shared-cpu-1x 256MB` 1대 상시 가동은 약 **$2~3/월** 정도라 여유 있음.
+- 더 저렴하게: `fly scale memory 256` 유지, 사용 안 할 때 `fly scale count 0` 으로 정지 후 필요 시 `fly scale count 1` 로 재개.
+- `auto_stop_machines = true` 로 바꾸면 유휴 시 자동 정지되지만 **예약 엔진이 멈추므로** 24시간 감시가 필요하면 그대로 두세요.
+
+### 자주 겪는 문제
+
+| 증상 | 해결 |
+| --- | --- |
+| 401 Unauthorized 지속 | Secrets 가 올바른지 `fly secrets list` 확인 |
+| 배포 시 `SRTrain` 설치 실패 | requirements.txt 에서 `SRTrain` → `SRT` 로 바꿔 시도 |
+| 이미지 빌드 너무 느림 | `fly deploy --remote-only` 가 기본. 로컬 Docker 로 빌드하려면 `--local-only` |
+| DB/키 초기화됨 | 볼륨 마운트 누락 — `fly volumes list` 로 `srt_data` 존재 확인 |
+
+---
+
 ## 📜 라이선스
 
 개인 사용 목적의 예제 프로젝트입니다. SRT 약관과 카카오 API 정책을 준수하여 사용하세요.

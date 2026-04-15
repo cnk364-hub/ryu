@@ -1,0 +1,39 @@
+# Fly.io 앱 설정 — `fly launch --no-deploy` 로 최초 생성 후 이 파일로 덮어쓰세요.
+# `app` 이름은 전 세계 고유해야 하므로 본인이 원하는 값으로 변경 필요.
+
+app = "srt-auto-booking"          # ← 본인 고유 이름으로 변경
+primary_region = "nrt"              # 도쿄 리전 (한국에서 가장 가까움)
+
+[build]
+
+# 엔진은 24시간 상주해야 하므로 absolutely 자동 정지 금지
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/healthz"
+
+[env]
+  OPEN_BROWSER = "0"
+  PORT = "8000"
+  HOST = "0.0.0.0"
+  TZ = "Asia/Seoul"
+
+# SQLite + Fernet 키 + 로그 영속화 볼륨
+# `fly volumes create srt_data --region nrt --size 1` 으로 미리 생성 필요
+[[mounts]]
+  source = "srt_data"
+  destination = "/app/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
