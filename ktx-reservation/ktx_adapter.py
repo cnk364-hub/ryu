@@ -103,22 +103,43 @@ class KTXAdapter:
             raise RuntimeError("korail2 라이브러리가 설치되어 있지 않습니다.")
         self._client = Korail(self.korail_id, self.password, auto_login=False)
         self._apply_random_ua()
+
+        # korail2 내부 session의 응답을 캡처하기 위해 훅 설치
+        captured = {"last_text": None, "last_status": None, "last_url": None}
+        try:
+            sess = getattr(self._client, "_session", None) or getattr(self._client, "session", None)
+            if sess is not None:
+                orig_post = sess.post
+
+                def hooked_post(url, *a, **kw):
+                    resp = orig_post(url, *a, **kw)
+                    try:
+                        captured["last_url"] = url
+                        captured["last_status"] = resp.status_code
+                        captured["last_text"] = (resp.text or "")[:800]
+                    except Exception:
+                        pass
+                    return resp
+
+                sess.post = hooked_post
+        except Exception:
+            pass
+
         try:
             ok = self._client.login()
         except Exception as e:
-            # korail2는 버전에 따라 LoginFailError 등을 raise. 원문 메시지 그대로 전달.
-            raise RuntimeError(f"코레일 로그인 거부: {e!s}") from e
-        if not ok:
-            # False 반환 케이스 (구버전 korail2) — 클라이언트의 마지막 응답 문구 시도
-            hint = ""
-            try:
-                last = getattr(self._client, "_last_response", None)
-                if last is not None:
-                    hint = f" (응답: {str(last)[:300]})"
-            except Exception:
-                pass
+            # korail2가 예외를 던지는 경우 — 캡처된 응답도 함께
+            snippet = captured.get("last_text") or ""
             raise RuntimeError(
-                f"코레일이 로그인 거부(아이디/비번 또는 소셜계정/회원탈퇴 여부 확인){hint}"
+                f"코레일 로그인 거부: {type(e).__name__}: {e!s} | 응답: {snippet[:400]}"
+            ) from e
+
+        if not ok:
+            # False 반환 케이스 — 응답 본문 그대로 올려 원인 파악
+            snippet = captured.get("last_text") or "<응답 캡처 실패>"
+            raise RuntimeError(
+                f"코레일 로그인 거부 (HTTP {captured.get('last_status')}, "
+                f"url={captured.get('last_url')}) 응답본문: {snippet[:500]}"
             )
         return True
 
