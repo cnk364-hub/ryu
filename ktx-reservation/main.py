@@ -158,7 +158,10 @@ class SettingsReq(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "stations": KTX_STATIONS})
+    # Starlette 0.30+ / Jinja2 최신 호환 시그니처 (request 를 첫 인자로)
+    return templates.TemplateResponse(
+        request, "index.html", {"stations": KTX_STATIONS}
+    )
 
 
 # ---------- 메타 ----------
