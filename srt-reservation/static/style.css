@@ -233,3 +233,7 @@ body {
   background: var(--warning);
   color: #000;
 }
+.badge.status-대기열 {
+  background: #ff8c3b;
+  color: #000;
+}

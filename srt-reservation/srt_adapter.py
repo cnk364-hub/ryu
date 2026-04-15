@@ -1,4 +1,4 @@
-"""SRT 라이브러리 래퍼. 로그인/조회/예약 + User-Agent 랜덤 교체.
+"""SRT 라이브러리 래퍼. 로그인/조회/예약 + User-Agent 랜덤 교체 + NetFunnel 대응.
 
 외부 의존성(SRTrain)이 설치되지 않았거나 네트워크가 없는 환경에서도 서버가
 시작되도록 import를 지연 처리한다.
@@ -10,6 +10,8 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
+
+import requests
 
 USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -48,8 +50,47 @@ SRT_STATIONS = [
 ]
 
 
+# ---- NetFunnel 관련 --------------------------------------------------------
+
+SRT_MAIN_URL = "https://etk.srail.kr/main.do"
+NETFUNNEL_URL = "https://netfunnel.sr.co.kr/"
+
+
+class NetFunnelError(RuntimeError):
+    """NetFunnel 대기열/차단 감지 시 발생하는 예외."""
+
+
+def is_netfunnel_error(e: BaseException | str) -> bool:
+    """예외/문자열이 NetFunnel 대기열·차단을 의미하는지 판별."""
+    msg = str(e) if not isinstance(e, str) else e
+    msg_l = msg.lower()
+    keywords = (
+        "netfunnel",
+        "grtype=4999",
+        "grtype=200",  # 대기열 진입 응답
+        "wrong server id",
+        "대기열",
+        "대기 중",
+        "waitnum",
+    )
+    return any(k in msg_l for k in keywords)
+
+
 def random_user_agent() -> str:
     return random.choice(USER_AGENTS)
+
+
+def _build_browser_headers() -> dict:
+    """실제 브라우저처럼 보이는 헤더 세트."""
+    return {
+        "User-Agent": random_user_agent(),
+        "Referer": "https://etk.srail.kr/",
+        "Origin": "https://etk.srail.kr",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.3",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
 
 
 @dataclass
@@ -72,6 +113,7 @@ class SRTAdapter:
         self._id: Optional[str] = None
         self._pw: Optional[str] = None
         self._lock = threading.RLock()
+        self._warmed_up: bool = False
 
     # ---- 로그인 ------------------------------------------------------------
     def login(self, srt_id: str, srt_pw: str) -> None:
@@ -80,8 +122,11 @@ class SRTAdapter:
 
         with self._lock:
             self._id, self._pw = srt_id, srt_pw
-            self._apply_user_agent()
+            self._apply_browser_headers()
+            self._warm_up()  # 로그인 전 메인페이지 워밍업
             self._srt = SRT(srt_id, srt_pw, verbose=False)
+            # 로그인 이후에도 세션 헤더 다시 보강
+            self._apply_browser_headers()
 
     def ensure_login(self) -> None:
         """세션이 없거나 만료된 경우 재로그인."""
@@ -90,16 +135,53 @@ class SRTAdapter:
                 raise RuntimeError("SRT 계정 정보가 없습니다. 계정 탭에서 설정하세요.")
             self.login(self._id, self._pw)
 
-    def _apply_user_agent(self) -> None:
-        """SRT 내부 세션에 랜덤 User-Agent 주입."""
+    def reset(self) -> None:
+        """세션 완전 초기화 (NetFunnel 등 심각한 오류 시 사용)."""
+        with self._lock:
+            self._srt = None
+            self._warmed_up = False
+
+    def _apply_browser_headers(self) -> None:
+        """SRT 내부 requests.Session 에 브라우저스러운 헤더 주입."""
+        headers = _build_browser_headers()
+        # 1) 클래스 레벨 기본 헤더 (새 세션 대비)
         try:
             from SRT.srt import SRTSession  # type: ignore
 
-            ua = random_user_agent()
-            SRTSession.headers["User-Agent"] = ua
+            if hasattr(SRTSession, "headers") and isinstance(SRTSession.headers, dict):
+                SRTSession.headers.update(headers)
         except Exception:
-            # 라이브러리 내부 구조 변경 시 조용히 무시 (조회는 그대로 동작)
             pass
+
+        # 2) 현재 활성 세션 객체의 헤더도 업데이트
+        if self._srt is not None:
+            for attr in ("_session", "session"):
+                sess = getattr(self._srt, attr, None)
+                if sess is not None and hasattr(sess, "headers"):
+                    try:
+                        sess.headers.update(headers)
+                    except Exception:
+                        pass
+
+    def _warm_up(self) -> None:
+        """SRT 메인페이지 먼저 접속해서 쿠키·세션 확보 (NetFunnel 완화 목적)."""
+        if self._warmed_up:
+            return
+        try:
+            s = requests.Session()
+            s.headers.update(_build_browser_headers())
+            # 메인페이지 GET — NetFunnel 쿠키가 세팅됨
+            s.get(SRT_MAIN_URL, timeout=10)
+            # 약간의 사람스러운 지연
+            time.sleep(random.uniform(0.3, 0.8))
+            self._warmed_up = True
+        except requests.RequestException:
+            # 워밍업 실패해도 조회 자체는 시도
+            pass
+
+    # (하위 호환) 기존 호출부 대비
+    def _apply_user_agent(self) -> None:
+        self._apply_browser_headers()
 
     # ---- 조회 --------------------------------------------------------------
     def search(
@@ -111,7 +193,7 @@ class SRTAdapter:
         available_only: bool = False,
     ) -> list[TrainInfo]:
         self.ensure_login()
-        self._apply_user_agent()
+        self._apply_browser_headers()
         assert self._srt is not None
         with self._lock:
             try:
@@ -124,14 +206,25 @@ class SRTAdapter:
                         self._srt, "search_train_allday"
                     )
                     trains = fn(dep, arr, date_yyyymmdd, time_hhmmss)
-            except Exception as e:  # 세션 만료 추정 시 재로그인 후 1회 재시도
+            except Exception as e:
+                # NetFunnel 은 별도 예외로 분류해서 호출측에서 길게 쉬도록 유도
+                if is_netfunnel_error(e):
+                    self.reset()
+                    raise NetFunnelError(str(e)) from e
+                # 세션 만료 추정 시 재로그인 후 1회 재시도
                 if self._looks_like_session_error(e):
-                    self._srt = None
+                    self.reset()
                     self.ensure_login()
                     fn = getattr(self._srt, "search_train", None) or getattr(
                         self._srt, "search_train_allday"
                     )
-                    trains = fn(dep, arr, date_yyyymmdd, time_hhmmss)
+                    try:
+                        trains = fn(dep, arr, date_yyyymmdd, time_hhmmss)
+                    except Exception as e2:
+                        if is_netfunnel_error(e2):
+                            self.reset()
+                            raise NetFunnelError(str(e2)) from e2
+                        raise
                 else:
                     raise
 
@@ -157,7 +250,13 @@ class SRTAdapter:
             st = seat_type
 
         with self._lock:
-            return self._srt.reserve(train.raw, special_seat=st)
+            try:
+                return self._srt.reserve(train.raw, special_seat=st)
+            except Exception as e:
+                if is_netfunnel_error(e):
+                    self.reset()
+                    raise NetFunnelError(str(e)) from e
+                raise
 
     # ---- 내부 유틸 ---------------------------------------------------------
     @staticmethod

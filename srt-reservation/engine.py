@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 
 import database as db
 from notifier import send_reservation_success
-from srt_adapter import adapter
+from srt_adapter import NetFunnelError, adapter, is_netfunnel_error
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ STATUS_SEARCHING = "조회중"
 STATUS_SUCCESS = "예약성공"
 STATUS_ERROR = "오류"
 STATUS_COOLDOWN = "휴식중"
+STATUS_NETFUNNEL = "대기열"
 
 
 def get_random_interval() -> float:
@@ -48,6 +49,7 @@ class EngineState:
     last_error: Optional[str] = None
     last_success: Optional[dict] = None
     consecutive_failures: int = 0
+    netfunnel_count: int = 0  # 연속 NetFunnel 차단 횟수
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +61,7 @@ class EngineState:
             "last_error": self.last_error,
             "last_success": self.last_success,
             "consecutive_failures": self.consecutive_failures,
+            "netfunnel_count": self.netfunnel_count,
             "now_ts": time.time(),
         }
 
@@ -217,17 +220,81 @@ class BookingEngine:
                 self.state.status = STATUS_SEARCHING
 
             t0 = time.time()
+            netfunnel_hit = False
             try:
                 success, info = self._try_once(cfg)
                 elapsed = time.time() - t0
+            except NetFunnelError as e:
+                elapsed = time.time() - t0
+                success, info = False, {"message": f"NetFunnel 차단: {e}"}
+                netfunnel_hit = True
+                self._log("WARNING", f"🚦 NetFunnel 대기열 감지: {e}")
             except Exception as e:
                 elapsed = time.time() - t0
+                # SRT 라이브러리가 NetFunnel 을 일반 예외로 던지는 경우도 감지
+                if is_netfunnel_error(e):
+                    netfunnel_hit = True
+                    self._log("WARNING", f"🚦 NetFunnel 대기열 감지(일반예외): {e}")
+                    adapter.reset()
+                else:
+                    self._log("ERROR", f"조회 중 예외: {e}")
                 success, info = False, {"message": f"예외: {e}"}
-                self._log("ERROR", f"조회 중 예외: {e}")
 
             with self._state_lock:
                 self.state.total_checks += 1
                 self.state.last_check_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # ---- NetFunnel 전용 처리 -----------------------------------------
+            if netfunnel_hit:
+                with self._state_lock:
+                    self.state.netfunnel_count += 1
+                    nf = self.state.netfunnel_count
+                    self.state.last_error = info.get("message", "NetFunnel")
+                db.add_history(
+                    dep_station=cfg["dep_station"],
+                    arr_station=cfg["arr_station"],
+                    dep_date=cfg["dep_date"],
+                    dep_time=None,
+                    train_no=None,
+                    status="차단",
+                    message=info.get("message", "NetFunnel"),
+                    elapsed=elapsed,
+                )
+
+                if nf >= 3:
+                    long_wait = 300  # 5분
+                    self._log(
+                        "WARNING",
+                        f"🚦 NetFunnel 차단 {nf}회 연속 → {long_wait//60}분 대기 후 세션 재초기화",
+                    )
+                    with self._state_lock:
+                        self.state.status = STATUS_NETFUNNEL
+                        self.state.next_check_at_ts = time.time() + long_wait
+                    if self._interruptible_sleep(long_wait):
+                        break
+                    with self._state_lock:
+                        self.state.netfunnel_count = 0
+                    # 세션 재초기화 + 재로그인
+                    self._relogin_safely()
+                    continue
+
+                wait = random.uniform(60.0, 120.0)
+                self._log(
+                    "WARNING",
+                    f"🚦 대기열 진입 중... {wait:.0f}초 후 재시도 (누적 {nf}회)",
+                )
+                with self._state_lock:
+                    self.state.status = STATUS_NETFUNNEL
+                    self.state.next_check_at_ts = time.time() + wait
+                if self._interruptible_sleep(wait):
+                    break
+                # 재시도 전 세션 완전 초기화 후 재로그인
+                self._relogin_safely()
+                continue
+            else:
+                # NetFunnel 이 아닌 일반 실패/성공 시에는 NetFunnel 카운터 리셋
+                with self._state_lock:
+                    self.state.netfunnel_count = 0
 
             if success:
                 with self._state_lock:
@@ -310,6 +377,18 @@ class BookingEngine:
             if self._stop_evt.wait(timeout=0.5):
                 return True
         return False
+
+    def _relogin_safely(self) -> None:
+        """세션 리셋 후 재로그인 시도 (실패해도 루프는 계속)."""
+        try:
+            adapter.reset()
+            srt_id = db.get_setting("srt_id", "")
+            srt_pw = db.get_setting("srt_password", "")
+            self._log("INFO", "🔄 세션 초기화 후 재로그인 시도")
+            adapter.login(srt_id, srt_pw)
+            self._log("SUCCESS", "재로그인 완료")
+        except Exception as e:
+            self._log("ERROR", f"재로그인 실패: {e}")
 
     def _try_once(self, cfg: dict) -> tuple[bool, dict]:
         date_str = cfg["dep_date"].replace("-", "")  # YYYYMMDD
