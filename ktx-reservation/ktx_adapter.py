@@ -103,8 +103,24 @@ class KTXAdapter:
             raise RuntimeError("korail2 라이브러리가 설치되어 있지 않습니다.")
         self._client = Korail(self.korail_id, self.password, auto_login=False)
         self._apply_random_ua()
-        ok = self._client.login()
-        return bool(ok)
+        try:
+            ok = self._client.login()
+        except Exception as e:
+            # korail2는 버전에 따라 LoginFailError 등을 raise. 원문 메시지 그대로 전달.
+            raise RuntimeError(f"코레일 로그인 거부: {e!s}") from e
+        if not ok:
+            # False 반환 케이스 (구버전 korail2) — 클라이언트의 마지막 응답 문구 시도
+            hint = ""
+            try:
+                last = getattr(self._client, "_last_response", None)
+                if last is not None:
+                    hint = f" (응답: {str(last)[:300]})"
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"코레일이 로그인 거부(아이디/비번 또는 소셜계정/회원탈퇴 여부 확인){hint}"
+            )
+        return True
 
     def ensure_logged_in(self):
         """세션 만료 시 자동 재로그인"""

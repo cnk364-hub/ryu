@@ -212,16 +212,26 @@ async def select_profile(pid: int):
 
 @app.post("/api/login-test")
 async def login_test(req: LoginTestReq):
+    import traceback as _tb
+    _emit_log("INFO", f"로그인 테스트 시작: id={req.korail_id} (pw {len(req.password)}자)")
     adapter = KTXAdapter(req.korail_id, req.password)
     try:
         ok = await asyncio.to_thread(adapter.login)
         if ok:
             _emit_log("SUCCESS", f"로그인 테스트 성공: {req.korail_id}")
             return {"ok": True, "message": "로그인 성공"}
-        return JSONResponse({"ok": False, "message": "로그인 실패"}, status_code=400)
+        _emit_log("ERROR", "로그인 실패: 코레일이 예외 없이 False 반환")
+        return JSONResponse(
+            {"ok": False, "message": "로그인 실패 (코레일이 아이디/비번 거부)"},
+            status_code=400,
+        )
     except Exception as e:
-        _emit_log("ERROR", f"로그인 테스트 실패: {e}")
-        return JSONResponse({"ok": False, "message": f"로그인 실패: {e}"}, status_code=400)
+        _emit_log("ERROR", f"로그인 테스트 실패: {type(e).__name__}: {e}")
+        _emit_log("ERROR", _tb.format_exc())
+        return JSONResponse(
+            {"ok": False, "message": f"{type(e).__name__}: {e}"},
+            status_code=400,
+        )
 
 
 # ---------- 설정 ----------
