@@ -61,10 +61,11 @@ class NetFunnelError(RuntimeError):
 
 
 def is_netfunnel_error(e: BaseException | str) -> bool:
-    """예외/문자열이 NetFunnel 대기열·차단을 의미하는지 판별."""
+    """예외/문자열이 NetFunnel 대기열·차단·HTML 에러페이지를 의미하는지 판별."""
     msg = str(e) if not isinstance(e, str) else e
     msg_l = msg.lower()
     keywords = (
+        # NetFunnel 명시적 에러
         "netfunnel",
         "grtype=4999",
         "grtype=200",  # 대기열 진입 응답
@@ -72,6 +73,15 @@ def is_netfunnel_error(e: BaseException | str) -> bool:
         "대기열",
         "대기 중",
         "waitnum",
+        # HTML 에러 페이지 (SRT가 JSON 대신 에러 페이지를 반환하는 케이스)
+        "failed to decode",
+        "invalid response",
+        "<!doctype",
+        "<html",
+        "errorbox",
+        "jqm-demos",       # SRT 에러 페이지 특유의 class
+        "/main/main.do",   # 에러 페이지 내 메인 복귀 버튼 링크
+        "historyback",
     )
     return any(k in msg_l for k in keywords)
 
