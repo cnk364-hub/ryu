@@ -211,6 +211,7 @@ class KorailMobile:
 
         # 상태
         self.logined: bool = False
+        self.login_method: str = ""  # 'mobile' | 'web' | ''
         self.key: Optional[str] = None
         self.membership_number: Optional[str] = None
         self.name: Optional[str] = None
@@ -299,6 +300,7 @@ class KorailMobile:
 
             if data.get("strResult") == "SUCC":
                 self.logined = True
+                self.login_method = "mobile"
                 self.key = data.get("Key") or data.get("key")
                 self.membership_number = data.get("strMbCrdNo")
                 self.name = data.get("strCustNm")
@@ -338,10 +340,11 @@ class KorailMobile:
             f"{last_msg or '알 수 없는 응답'} | {detail} | 코드={last_code}"
         )
 
-    def _build_login_payload(self, flag: str, normalized: str, version: str) -> Dict[str, Any]:
+    def _device_fields(self) -> Dict[str, Any]:
+        """로그인 외 모든 모바일 API 호출에도 실제 앱처럼 디바이스 필드 포함"""
         return {
             "Device": self.device,
-            "Version": version,
+            "Version": self.version,
             "Passtype": "KR",
             "Id_Type": "HFN",
             "Id_Dev": "RX" + self.device_id,
@@ -351,16 +354,23 @@ class KorailMobile:
             "Id_Ven": "SM-S918N",
             "Id_Tk": self.fcm_token,
             "Id_Token": self.fcm_token,
+            "hidAppVer": DEFAULT_APP_VER,
+        }
+
+    def _build_login_payload(self, flag: str, normalized: str, version: str) -> Dict[str, Any]:
+        base = self._device_fields()
+        base["Version"] = version  # 로그인은 지정된 버전으로
+        base.update({
             "txtInputFlg": flag,
             "txtMemberNo": normalized,
             "txtPwd": self.password,
             "hidMemberFlg": "1",
-            "hidAppVer": DEFAULT_APP_VER,
             "checkFlag": "Y",
             "LoginFlag": "N",
             "loginType": "HFN",
             "langDvsnCd": "KR",
-        }
+        })
+        return base
 
     # ------------------------ 웹 로그인 폴백 ------------------------
     def _web_login(self, flag: str, normalized: str) -> bool:
@@ -430,6 +440,7 @@ class KorailMobile:
         )
         if cookies_ok:
             self.logined = True
+            self.login_method = "web"
             return True
         raise LoginFailError(
             f"웹 로그인 결과 불명확. 쿠키={cookie_names[:5]} 본문일부: {text[:250]}"
@@ -441,8 +452,12 @@ class KorailMobile:
         if len(time_) == 4:
             time_ = time_ + "00"
 
-        payload = {
-            "Device": self.device,
+        # 웹 로그인 경로였으면 모바일 API 조회는 바로 실패시키는 대신 웹 조회로
+        if self.login_method == "web":
+            return self._web_search(dep, arr, date, time_, adult, child)
+
+        payload = self._device_fields()
+        payload.update({
             "radJobId": "1",
             "selGoTrain": "05",
             "txtCardPsgCnt": "0",
@@ -465,12 +480,11 @@ class KorailMobile:
             "txtSeatAttCd4": "015",
             "txtSeatAttCd5": "000",
             "txtTrnGpCd": "05",
-            "Version": self.version,
             "Key": self.key or "",
             "h_abrd_dt": date,
             "h_dpt_rs_stn_cd": _station_code(dep),
             "h_arv_rs_stn_cd": _station_code(arr),
-        }
+        })
 
         data = self._post_mobile(URL_SEARCH, payload)
         if data.get("strResult") != "SUCC":
@@ -480,6 +494,9 @@ class KorailMobile:
                 return []
             if "S111" in code or "로그인" in msg:
                 raise NeedToLoginError(msg)
+            # MACRO 감지 시 웹 조회로 폴백
+            if "MACRO" in code.upper() or "업데이트" in msg or "안정적인" in msg:
+                return self._web_search(dep, arr, date, time_, adult, child)
             raise KorailError(f"조회 실패: {msg} (code={code})")
 
         infos = data.get("trn_infos", {}).get("trn_info", [])
@@ -507,6 +524,106 @@ class KorailMobile:
             ))
         return trains
 
+    # ------------------------ 웹 기반 조회 (모바일 API 차단 시) ------------------------
+    def _web_search(self, dep: str, arr: str, date: str, time_: str,
+                    adult: int = 1, child: int = 0) -> List[Train]:
+        """
+        letskorail.com 의 공개 조회 페이지 사용.
+        - URL: ebizprd/EbizPrdTkpr01100W_pr11100.do
+        - HTML 응답을 정규표현식으로 최소 파싱
+        """
+        url = WEB_BASE + "ebizprd/EbizPrdTkpr01100W_pr11100.do"
+        payload = {
+            "srcplandAndMdlCheck": "Y",
+            "txtPsgFlg_1": str(adult),
+            "txtPsgFlg_2": str(child),
+            "txtPsgFlg_3": "0",
+            "txtPsgFlg_7": "0",
+            "txtPsgFlg_8": "0",
+            "txtTrnGpCd": "05",      # KTX
+            "selGoTrain": "05",
+            "radJobId": "1",
+            "txtGoStart": dep,
+            "txtGoEnd": arr,
+            "txtGoAbrdDt": date,
+            "txtGoHour": time_[:2],
+            "txtGoMinute": time_[2:4] if len(time_) >= 4 else "00",
+            "selGoSeat1": "015",
+            "selGoSeat2": "000",
+            "adjcCheckYn": "N",
+            "selGoSeat": "015",
+            "chkStnConstraint": "000000",
+            "txtMenuId": "11",
+        }
+        headers = {
+            "Referer": WEB_BASE + "korail/com/login.do",
+            "Origin": WEB_BASE.rstrip("/"),
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        _human_pause(0.4, 1.2)
+        try:
+            r = self.session.post(url, data=payload, headers=headers, timeout=20)
+            text = getattr(r, "text", "") or ""
+        except Exception as e:
+            raise KorailError(f"웹 조회 네트워크 오류: {e}")
+
+        self.last_response_text = text[:2000]
+        self.last_url = url
+
+        # MACRO 같은 차단이면 메시지 유지
+        if "MACRO" in text.upper() or "업데이트한 뒤" in text:
+            raise KorailError(
+                f"웹 조회도 차단됨 (MACRO 의심). 본문일부: {text[:300]}"
+            )
+
+        # 열차 행 추출 (간단 파싱)
+        # letskorail.com 응답은 JS 변수 혹은 테이블. 공통 필드들이 input hidden 으로
+        # 들어감. h_trn_no, h_dpt_tm, h_arv_tm, h_rsv_psb_flg, h_spe_rsv_cd 등을 찾음.
+        trains: List[Train] = []
+
+        # 패턴: name="h_trn_no" value="101" 같은 hidden input 블록 반복
+        # 열차별로 tr 블록이 반복되므로, 한 블록을 잡는 패턴으로.
+        # 간단히 각 key별 value 리스트를 추출해 index로 묶는다.
+        def _extract_all(name: str) -> List[str]:
+            return re.findall(
+                rf'name="{re.escape(name)}"\s+value="([^"]*)"',
+                text,
+            )
+
+        train_nos = _extract_all("h_trn_no")
+        dep_tms = _extract_all("h_dpt_tm")
+        arv_tms = _extract_all("h_arv_tm")
+        dep_dts = _extract_all("h_dpt_dt") or [date] * len(train_nos)
+        dep_codes = _extract_all("h_dpt_rs_stn_cd") or [_station_code(dep)] * len(train_nos)
+        arv_codes = _extract_all("h_arv_rs_stn_cd") or [_station_code(arr)] * len(train_nos)
+        gen_flags = _extract_all("h_rsv_psb_flg") or ["00"] * len(train_nos)
+        spe_flags = _extract_all("h_spe_rsv_cd") or ["00"] * len(train_nos)
+        trn_clsf = _extract_all("h_trn_clsf_cd") or ["05"] * len(train_nos)
+        trn_gp = _extract_all("h_trn_gp_cd") or ["109"] * len(train_nos)
+        run_dts = _extract_all("h_run_dt") or [date] * len(train_nos)
+
+        n = len(train_nos)
+        for i in range(n):
+            trains.append(Train(
+                train_type=trn_clsf[i] if i < len(trn_clsf) else "05",
+                train_type_name="KTX",
+                train_no=train_nos[i],
+                train_group=trn_gp[i] if i < len(trn_gp) else "109",
+                dep_name=dep,
+                dep_code=dep_codes[i] if i < len(dep_codes) else _station_code(dep),
+                arr_name=arr,
+                arr_code=arv_codes[i] if i < len(arv_codes) else _station_code(arr),
+                dep_date=dep_dts[i] if i < len(dep_dts) else date,
+                dep_time=dep_tms[i] if i < len(dep_tms) else "",
+                arr_time=arv_tms[i] if i < len(arv_tms) else "",
+                general_seat_state=gen_flags[i] if i < len(gen_flags) else "00",
+                special_seat_state=spe_flags[i] if i < len(spe_flags) else "00",
+                run_date=run_dts[i] if i < len(run_dts) else date,
+                raw={"source": "web", "index": i},
+            ))
+        return trains
+
     # ------------------------ 예약 ------------------------
     def reserve(self, train: Train, seat_class: str = "ANY",
                 adult: int = 1, child: int = 0) -> Dict[str, Any]:
@@ -517,9 +634,8 @@ class KorailMobile:
         else:
             seat_code = SEAT_GENERAL if train.has_general_seat else SEAT_SPECIAL
 
-        payload = {
-            "Device": self.device,
-            "Version": self.version,
+        payload = self._device_fields()
+        payload.update({
             "Key": self.key or "",
             "txtGdNo": "",
             "txtJobId": "1101",
@@ -558,7 +674,7 @@ class KorailMobile:
             "txtCompaCnt8": "0",
             "txtSeatAttCd": seat_code,
             "txtChgFlg": "",
-        }
+        })
 
         data = self._post_mobile(URL_RESERVE, payload)
         if data.get("strResult") == "SUCC":
