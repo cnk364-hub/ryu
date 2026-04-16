@@ -5,10 +5,6 @@
 // =============================================================================
 
 const { useState, useEffect, useMemo, useRef } = React;
-const {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, ReferenceDot, Area, ComposedChart,
-} = Recharts;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -213,6 +209,7 @@ function ExecutionStepper({ currentAgent, completedAgents, durations }) {
 }
 
 function FeedingPatternChart({ data }) {
+  const [hover, setHover] = useState(null);
   if (!data || data.length === 0) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-gray-500">
@@ -221,62 +218,114 @@ function FeedingPatternChart({ data }) {
     );
   }
 
-  const chartData = data.map((d) => ({
-    date: d.date.slice(5),
-    consumption: d.consumption_kg,
-    baseline: d.normal_baseline,
-    status: d.status,
-  }));
+  // Dimensions
+  const W = 760, H = 260;
+  const padL = 44, padR = 16, padT = 14, padB = 36;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
 
-  const anomalyDots = data
-    .map((d, i) => ({ d, i }))
-    .filter(({ d }) => d.status !== 'normal');
+  const consumptions = data.map((d) => d.consumption_kg);
+  const baselines = data.map((d) => d.normal_baseline);
+  const allVals = [...consumptions, ...baselines];
+  const yMin = Math.floor(Math.min(...allVals) / 10) * 10 - 5;
+  const yMax = Math.ceil(Math.max(...allVals) / 10) * 10 + 5;
+  const n = data.length;
+
+  const x = (i) => padL + (n <= 1 ? 0 : (i * innerW) / (n - 1));
+  const y = (v) => padT + innerH - ((v - yMin) / (yMax - yMin)) * innerH;
+
+  const pathConsumption = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(d.consumption_kg)}`).join(' ');
+  const pathBaseline = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(d.normal_baseline)}`).join(' ');
+
+  // Y ticks
+  const yTicks = [];
+  const tickStep = Math.ceil((yMax - yMin) / 5 / 10) * 10;
+  for (let v = Math.ceil(yMin / tickStep) * tickStep; v <= yMax; v += tickStep) yTicks.push(v);
+
+  const statusColor = (s) =>
+    s === 'emergency' ? '#EF4444' : s === 'danger' ? '#F97316' : s === 'caution' ? '#EAB308' : '#3B82F6';
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-        <CartesianGrid stroke="#374151" strokeDasharray="3 3" />
-        <XAxis dataKey="date" tick={{ fill: '#9CA3AF', fontSize: 10 }} interval={3} />
-        <YAxis tick={{ fill: '#9CA3AF', fontSize: 10 }} domain={['auto', 'auto']} />
-        <Tooltip
-          contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', fontSize: 12 }}
-          labelStyle={{ color: '#D1D5DB' }}
-        />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-        <Line
-          type="monotone"
-          dataKey="baseline"
-          stroke="#6B7280"
-          strokeDasharray="4 4"
-          strokeWidth={1.5}
-          dot={false}
-          name="정상 기준선"
-        />
-        <Line
-          type="monotone"
-          dataKey="consumption"
-          stroke="#3B82F6"
-          strokeWidth={2}
-          dot={{ r: 2, fill: '#3B82F6' }}
-          name="일일 섭취량(kg)"
-        />
-        {anomalyDots.map(({ i, d }) => (
-          <ReferenceDot
-            key={i}
-            x={chartData[i].date}
-            y={d.consumption_kg}
-            r={5}
-            fill={
-              d.status === 'emergency' ? '#EF4444'
-              : d.status === 'danger' ? '#F97316'
-              : '#EAB308'
-            }
-            stroke="#0a0f1a"
-            strokeWidth={2}
-          />
+    <div className="relative w-full">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 280 }}>
+        {/* Y grid + ticks */}
+        {yTicks.map((v, i) => (
+          <g key={i}>
+            <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="#374151" strokeDasharray="3 3" strokeWidth="1" />
+            <text x={padL - 6} y={y(v) + 3} fontSize="10" fill="#9CA3AF" textAnchor="end">{v}</text>
+          </g>
         ))}
-      </ComposedChart>
-    </ResponsiveContainer>
+        {/* X ticks (every ~5 days) */}
+        {data.map((d, i) => {
+          if (i % Math.max(1, Math.floor(n / 6)) !== 0 && i !== n - 1) return null;
+          return (
+            <text key={i} x={x(i)} y={H - padB + 14} fontSize="10" fill="#9CA3AF" textAnchor="middle">
+              {d.date.slice(5)}
+            </text>
+          );
+        })}
+        {/* Axes */}
+        <line x1={padL} x2={W - padR} y1={padT + innerH} y2={padT + innerH} stroke="#4B5563" strokeWidth="1" />
+        <line x1={padL} x2={padL} y1={padT} y2={padT + innerH} stroke="#4B5563" strokeWidth="1" />
+        {/* Baseline line */}
+        <path d={pathBaseline} fill="none" stroke="#6B7280" strokeWidth="1.5" strokeDasharray="4 4" />
+        {/* Consumption line */}
+        <path d={pathConsumption} fill="none" stroke="#3B82F6" strokeWidth="2" />
+        {/* Data points (anomalies highlighted) */}
+        {data.map((d, i) => {
+          const isAnom = d.status !== 'normal';
+          return (
+            <circle
+              key={i}
+              cx={x(i)}
+              cy={y(d.consumption_kg)}
+              r={isAnom ? 5 : 2.5}
+              fill={isAnom ? statusColor(d.status) : '#3B82F6'}
+              stroke={isAnom ? '#0a0f1a' : 'none'}
+              strokeWidth={isAnom ? 2 : 0}
+              onMouseEnter={() => setHover({ i, d })}
+              onMouseLeave={() => setHover(null)}
+              style={{ cursor: 'pointer' }}
+            />
+          );
+        })}
+        {/* Hover tooltip */}
+        {hover && (() => {
+          const cx = x(hover.i);
+          const cy = y(hover.d.consumption_kg);
+          const tw = 160, th = 56;
+          const tx = Math.min(W - padR - tw, Math.max(padL, cx - tw / 2));
+          const ty = cy - th - 10 < padT ? cy + 12 : cy - th - 10;
+          return (
+            <g>
+              <rect x={tx} y={ty} width={tw} height={th} rx="4" fill="#111827" stroke="#374151" />
+              <text x={tx + 8} y={ty + 16} fontSize="11" fill="#D1D5DB">{hover.d.date}</text>
+              <text x={tx + 8} y={ty + 31} fontSize="11" fill="#3B82F6">섭취 {hover.d.consumption_kg}kg</text>
+              <text x={tx + 8} y={ty + 46} fontSize="11" fill={statusColor(hover.d.status)}>
+                편차 {hover.d.deviation_pct}% · {hover.d.status}
+              </text>
+            </g>
+          );
+        })()}
+      </svg>
+      <div className="mt-2 flex gap-4 text-[11px] text-gray-400">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 bg-blue-500" /> 일일 섭취량(kg)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 border-t border-dashed border-gray-500" /> 정상 기준선
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2 w-2 rounded-full bg-yellow-500" /> 주의
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2 w-2 rounded-full bg-orange-500" /> 위험
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2 w-2 rounded-full bg-red-500" /> 긴급
+        </span>
+      </div>
+    </div>
   );
 }
 

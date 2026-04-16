@@ -11,10 +11,9 @@
       theme: { extend: {} }
     };
   </script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
   <style>
     body { background: #0a0f1a; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
     ::-webkit-scrollbar { width: 6px; }
@@ -30,6 +29,26 @@
 </head>
 <body class="min-h-screen antialiased">
   <div id="root"></div>
+  <div id="error-panel" style="display:none; position:fixed; top:12px; left:12px; right:12px; z-index:9999; background:#7f1d1d; color:#fecaca; border:1px solid #ef4444; border-radius:8px; padding:14px; font-family:ui-monospace,Menlo,monospace; font-size:12px; white-space:pre-wrap; max-height:50vh; overflow:auto;"></div>
+  <script>
+    (function(){
+      var panel = document.getElementById('error-panel');
+      function show(msg){ panel.style.display='block'; panel.textContent = msg; }
+      window.addEventListener('error', function(e){
+        show('[JS Error] ' + (e.message || e.error) + '\n' + (e.filename||'') + ':' + (e.lineno||'') );
+      });
+      window.addEventListener('unhandledrejection', function(e){
+        show('[Promise Rejection] ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+      });
+      // Guard: if #root is still empty after 4s, show a hint
+      setTimeout(function(){
+        var root = document.getElementById('root');
+        if (root && root.childElementCount === 0 && panel.style.display === 'none') {
+          show('[Render Timeout] 4초 내 화면이 렌더링되지 않았습니다. DevTools Console을 확인하거나, /app.js 와 /mock-data/responses.json 요청이 200으로 응답했는지 확인하세요.');
+        }
+      }, 4000);
+    })();
+  </script>
   <script type="text/babel" src="/app.js"></script>
 </body>
 </html>
