@@ -400,21 +400,39 @@ class KorailMobile:
         except Exception as e:
             raise KorailError(f"웹로그인 네트워크 오류: {e}")
 
-        # 성공 판정: 로그인 실패 문구가 없고 쿠키에 세션 IDgetattr
+        # 성공 판정: 로그인 실패 문구가 없고 쿠키에 세션 ID 존재
         if "로그인 정보가" in text or "비밀번호" in text or "일치하지" in text:
             raise LoginFailError(
                 "웹 로그인 거부 — 아이디/비밀번호 확인 필요"
             )
-        # 세션 쿠키 확인
+
+        # 쿠키 검사 — requests / curl_cffi 양쪽 API 지원
+        cookie_names: List[str] = []
+        try:
+            jar = self.session.cookies
+            # requests CookieJar 이면 Cookie 객체, curl_cffi 이면 dict 또는 str
+            if hasattr(jar, "get_dict"):
+                cookie_names = list(jar.get_dict().keys())
+            elif hasattr(jar, "keys"):
+                cookie_names = list(jar.keys())
+            else:
+                for c in jar:
+                    if hasattr(c, "name"):
+                        cookie_names.append(c.name)
+                    else:
+                        cookie_names.append(str(c))
+        except Exception:
+            pass
+
         cookies_ok = any(
-            "JSESSIONID" in c.name or "WMONID" in c.name
-            for c in self.session.cookies
+            ("JSESSIONID" in n or "WMONID" in n or "SESSION" in n.upper())
+            for n in cookie_names
         )
         if cookies_ok:
             self.logined = True
             return True
         raise LoginFailError(
-            f"웹 로그인 결과 불명확. 본문 일부: {text[:300]}"
+            f"웹 로그인 결과 불명확. 쿠키={cookie_names[:5]} 본문일부: {text[:250]}"
         )
 
     # ------------------------ 열차 조회 ------------------------
