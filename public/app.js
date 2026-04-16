@@ -497,9 +497,9 @@ function App() {
   const [envData, setEnvData] = useState(null);
   const cancelRef = useRef({ cancelled: false });
 
-  // Load mock data on mount
+  // Load mock data on mount (relative path — works on server.js and static hosts)
   useEffect(() => {
-    fetch('/mock-data/responses.json')
+    fetch('./data/responses.json')
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -509,14 +509,14 @@ function App() {
   }, []);
 
   // Load initial feeding data (normal baseline - first 25 days of ASF scenario)
+  // Uses client-side Simulator (no server dependency).
   useEffect(() => {
-    fetch('/api/simulator?scenario=disease_asf')
-      .then((r) => r.json())
-      .then((d) => {
-        setFeedingData(d.feedingData.slice(0, 25));
-        setEnvData(d.environmentData);
-      })
-      .catch(() => { /* ignore; chart will show loading */ });
+    if (!window.Simulator) return;
+    try {
+      const d = window.Simulator.generateData('disease_asf');
+      setFeedingData(d.feedingData.slice(0, 25));
+      setEnvData(d.environmentData);
+    } catch (_) { /* ignore */ }
   }, []);
 
   // Live clock
@@ -539,15 +539,14 @@ function App() {
     setDurations({});
     setRiskLevel('normal');
 
-    // Load full 30-day feeding data + env for the selected scenario
-    fetch(`/api/simulator?scenario=${encodeURIComponent(id)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (localCancel.cancelled) return;
+    // Load full 30-day feeding data + env for the selected scenario (client-side).
+    if (window.Simulator) {
+      try {
+        const d = window.Simulator.generateData(id);
         setFeedingData(d.feedingData);
         setEnvData(d.environmentData);
-      })
-      .catch(() => { /* ignore */ });
+      } catch (_) { /* ignore */ }
+    }
 
     const responses = mockData[id];
 
@@ -587,7 +586,7 @@ function App() {
       <div className="mx-auto max-w-2xl p-8 text-center">
         <div className="rounded-lg border border-red-500 bg-red-950/30 p-6">
           <h2 className="mb-2 text-lg font-bold text-red-300">Mock 데이터 로드 실패</h2>
-          <p className="text-sm text-red-200">/mock-data/responses.json: {loadError}</p>
+          <p className="text-sm text-red-200">./data/responses.json: {loadError}</p>
           <p className="mt-3 text-xs text-gray-400">
             <code className="rounded bg-gray-800 px-1.5 py-0.5">node server.js</code> 로 서버를 실행했는지 확인하세요.
           </p>
