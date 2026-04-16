@@ -5,6 +5,10 @@
 // =============================================================================
 
 const { useState, useEffect, useMemo, useRef } = React;
+const {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, ReferenceDot, Area, ComposedChart,
+} = Recharts;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -76,6 +80,30 @@ function similarityColor(score) {
 
 function nowKST() {
   return new Date().toLocaleString('ko-KR', { hour12: false });
+}
+
+function computeMetrics(feedingData) {
+  if (!feedingData || feedingData.length === 0) {
+    return { feedingChangeRate: 0, anomalyDays: 0, estimatedRiskHours: 999 };
+  }
+  const last = feedingData[feedingData.length - 1];
+  const last7 = feedingData.slice(-7);
+  const avg7 = last7.reduce((s, d) => s + d.consumption_kg, 0) / last7.length;
+  const changeRate = avg7 === 0 ? 0 : ((last.consumption_kg - avg7) / avg7) * 100;
+  let anomalyDays = 0;
+  for (let i = feedingData.length - 1; i >= 0; i--) {
+    if (feedingData[i].status === 'normal') break;
+    anomalyDays++;
+  }
+  let estimatedRiskHours = 999;
+  if (anomalyDays >= 3) estimatedRiskHours = 12;
+  else if (anomalyDays >= 2) estimatedRiskHours = 24;
+  else if (anomalyDays >= 1) estimatedRiskHours = 48;
+  return {
+    feedingChangeRate: Math.round(changeRate * 10) / 10,
+    anomalyDays,
+    estimatedRiskHours,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +208,92 @@ function ExecutionStepper({ currentAgent, completedAgents, durations }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function FeedingPatternChart({ data }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="flex h-64 items-center justify-center text-sm text-gray-500">
+        급이 데이터 로딩 중...
+      </div>
+    );
+  }
+
+  const chartData = data.map((d) => ({
+    date: d.date.slice(5),
+    consumption: d.consumption_kg,
+    baseline: d.normal_baseline,
+    status: d.status,
+  }));
+
+  const anomalyDots = data
+    .map((d, i) => ({ d, i }))
+    .filter(({ d }) => d.status !== 'normal');
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+        <CartesianGrid stroke="#374151" strokeDasharray="3 3" />
+        <XAxis dataKey="date" tick={{ fill: '#9CA3AF', fontSize: 10 }} interval={3} />
+        <YAxis tick={{ fill: '#9CA3AF', fontSize: 10 }} domain={['auto', 'auto']} />
+        <Tooltip
+          contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', fontSize: 12 }}
+          labelStyle={{ color: '#D1D5DB' }}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Line
+          type="monotone"
+          dataKey="baseline"
+          stroke="#6B7280"
+          strokeDasharray="4 4"
+          strokeWidth={1.5}
+          dot={false}
+          name="정상 기준선"
+        />
+        <Line
+          type="monotone"
+          dataKey="consumption"
+          stroke="#3B82F6"
+          strokeWidth={2}
+          dot={{ r: 2, fill: '#3B82F6' }}
+          name="일일 섭취량(kg)"
+        />
+        {anomalyDots.map(({ i, d }) => (
+          <ReferenceDot
+            key={i}
+            x={chartData[i].date}
+            y={d.consumption_kg}
+            r={5}
+            fill={
+              d.status === 'emergency' ? '#EF4444'
+              : d.status === 'danger' ? '#F97316'
+              : '#EAB308'
+            }
+            stroke="#0a0f1a"
+            strokeWidth={2}
+          />
+        ))}
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+function MetricCard({ title, value, unit, description, alert, trend }) {
+  const trendIcon = trend === 'down' ? '▼' : trend === 'up' ? '▲' : '–';
+  const trendColor = trend === 'down' ? 'text-red-400' : trend === 'up' ? 'text-green-400' : 'text-gray-500';
+  return (
+    <div className={`rounded-lg border p-3 ${alert ? 'border-red-500/60 bg-red-950/20' : 'border-gray-700 bg-gray-800/40'}`}>
+      <div className="mb-1 text-[11px] font-medium text-gray-400">{title}</div>
+      <div className="flex items-baseline gap-1">
+        <span className={`text-xl font-bold tabular-nums ${alert ? 'text-red-300' : 'text-white'}`}>
+          {value}
+        </span>
+        {unit && <span className="text-xs text-gray-500">{unit}</span>}
+        {trend && <span className={`ml-auto text-xs ${trendColor}`}>{trendIcon}</span>}
+      </div>
+      <div className="mt-1 text-[10px] text-gray-500">{description}</div>
     </div>
   );
 }
@@ -330,6 +444,8 @@ function App() {
   const [riskLevel, setRiskLevel] = useState('normal');
   const [isRunning, setIsRunning] = useState(false);
   const [time, setTime] = useState(nowKST());
+  const [feedingData, setFeedingData] = useState([]);
+  const [envData, setEnvData] = useState(null);
   const cancelRef = useRef({ cancelled: false });
 
   // Load mock data on mount
@@ -341,6 +457,17 @@ function App() {
       })
       .then(setMockData)
       .catch((e) => setLoadError(e.message));
+  }, []);
+
+  // Load initial feeding data (normal baseline - first 25 days of ASF scenario)
+  useEffect(() => {
+    fetch('/api/simulator?scenario=disease_asf')
+      .then((r) => r.json())
+      .then((d) => {
+        setFeedingData(d.feedingData.slice(0, 25));
+        setEnvData(d.environmentData);
+      })
+      .catch(() => { /* ignore; chart will show loading */ });
   }, []);
 
   // Live clock
@@ -362,6 +489,16 @@ function App() {
     setResults({});
     setDurations({});
     setRiskLevel('normal');
+
+    // Load full 30-day feeding data + env for the selected scenario
+    fetch(`/api/simulator?scenario=${encodeURIComponent(id)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (localCancel.cancelled) return;
+        setFeedingData(d.feedingData);
+        setEnvData(d.environmentData);
+      })
+      .catch(() => { /* ignore */ });
 
     const responses = mockData[id];
 
@@ -430,6 +567,7 @@ function App() {
   const planningResp = results.planning;
   const orchestrationResp = results.orchestration;
   const similarCases = (planningResp && planningResp.similar_cases) || [];
+  const metrics = computeMetrics(feedingData);
 
   return (
     <div className={`min-h-screen ${borderClass}`}>
@@ -459,6 +597,58 @@ function App() {
 
       {/* Main */}
       <main className="mx-auto max-w-[1400px] space-y-6 p-4">
+        {/* Dashboard: feeding chart + metrics */}
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
+          <div className="rounded-lg border border-gray-700 bg-gray-800/30 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-300">
+                급이패턴 실시간 모니터링
+              </h2>
+              <span className="text-xs text-gray-500">
+                최근 {feedingData.length}일 데이터
+              </span>
+            </div>
+            <FeedingPatternChart data={feedingData} />
+            {envData && (
+              <div className="mt-3 flex flex-wrap gap-3 border-t border-gray-700 pt-3 text-xs">
+                <span className="text-gray-400">🌡 온도 <strong className="text-white">{envData.temperature}°C</strong></span>
+                <span className="text-gray-400">💧 습도 <strong className="text-white">{envData.humidity}%</strong></span>
+                <span className="text-gray-400">☁ 암모니아 <strong className="text-white">{envData.ammonia_ppm}ppm</strong></span>
+                <span className="text-gray-400">
+                  환기상태
+                  <strong className={`ml-1 ${envData.ventilation_status === 'critical' ? 'text-red-300' : 'text-green-300'}`}>
+                    {envData.ventilation_status}
+                  </strong>
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="space-y-3">
+            <MetricCard
+              title="급이량 변화율"
+              value={metrics.feedingChangeRate}
+              unit="%"
+              description="오늘 vs 7일 평균"
+              trend={metrics.feedingChangeRate < -10 ? 'down' : metrics.feedingChangeRate > 5 ? 'up' : 'stable'}
+              alert={metrics.feedingChangeRate < -20}
+            />
+            <MetricCard
+              title="이상 지속일수"
+              value={metrics.anomalyDays}
+              unit="일"
+              description="연속 이상 탐지 일수"
+              alert={metrics.anomalyDays > 2}
+            />
+            <MetricCard
+              title="위험 전환 예상"
+              value={metrics.estimatedRiskHours > 100 ? '∞' : metrics.estimatedRiskHours}
+              unit={metrics.estimatedRiskHours > 100 ? '' : '시간'}
+              description="HMM 모델 추정"
+              alert={metrics.estimatedRiskHours < 24}
+            />
+          </div>
+        </section>
+
         {/* Scenario selection */}
         <section>
           <h2 className="mb-3 text-lg font-bold text-white">시나리오 선택</h2>
