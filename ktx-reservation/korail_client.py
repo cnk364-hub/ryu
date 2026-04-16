@@ -529,71 +529,123 @@ class KorailMobile:
                     adult: int = 1, child: int = 0) -> List[Train]:
         """
         letskorail.com 의 공개 조회 페이지 사용.
-        - URL: ebizprd/EbizPrdTkpr01100W_pr11100.do
-        - HTML 응답을 정규표현식으로 최소 파싱
+        여러 URL / 파라미터 조합 시도.
         """
-        url = WEB_BASE + "ebizprd/EbizPrdTkpr01100W_pr11100.do"
-        payload = {
-            "srcplandAndMdlCheck": "Y",
+        # 2단계: 1) 조회 폼 GET (쿠키/세션 확립) → 2) 결과 POST
+        candidate_urls = [
+            WEB_BASE + "ebizprd/EbizPrdTkpr01100W_pr11100.do",
+            WEB_BASE + "ebizprd/EbizPrdTkpr01200W_pr11200.do",
+            WEB_BASE + "ebz/prdPkg/EbzPrdKTP01.do",
+        ]
+
+        headers = {
+            "Referer": WEB_BASE + "ebizprd/EbizPrdTkpr01100W_pr11100.do",
+            "Origin": WEB_BASE.rstrip("/"),
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+
+        # 조회 파라미터 (시도할 파라미터 셋)
+        base_payload = {
+            "radJobId": "1",
+            "selGoTrain": "05",           # KTX
+            "txtGoStart": dep,
+            "txtGoEnd": arr,
+            "txtGoStartCode": _station_code(dep),
+            "txtGoEndCode": _station_code(arr),
+            "txtGoAbrdDt": date,
+            "txtGoHour": time_[:2] if len(time_) >= 2 else "06",
+            "txtGoMinute": "00",
             "txtPsgFlg_1": str(adult),
             "txtPsgFlg_2": str(child),
             "txtPsgFlg_3": "0",
+            "txtPsgFlg_4": "0",
+            "txtPsgFlg_5": "0",
             "txtPsgFlg_7": "0",
             "txtPsgFlg_8": "0",
-            "txtTrnGpCd": "05",      # KTX
-            "selGoTrain": "05",
-            "radJobId": "1",
-            "txtGoStart": dep,
-            "txtGoEnd": arr,
-            "txtGoAbrdDt": date,
-            "txtGoHour": time_[:2],
-            "txtGoMinute": time_[2:4] if len(time_) >= 4 else "00",
+            "txtTrnGpCd": "05",
+            "txtSeatAttCd1": "000",
+            "txtSeatAttCd2": "000",
+            "txtSeatAttCd3": "000",
+            "txtSeatAttCd4": "015",
+            "txtSeatAttCd5": "000",
+            "txtMenuId": "11",
             "selGoSeat1": "015",
             "selGoSeat2": "000",
             "adjcCheckYn": "N",
-            "selGoSeat": "015",
             "chkStnConstraint": "000000",
-            "txtMenuId": "11",
+            "srcplandAndMdlCheck": "Y",
+            "hidPageMode": "search",
         }
-        headers = {
-            "Referer": WEB_BASE + "korail/com/login.do",
-            "Origin": WEB_BASE.rstrip("/"),
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-Requested-With": "XMLHttpRequest",
-        }
-        _human_pause(0.4, 1.2)
-        try:
-            r = self.session.post(url, data=payload, headers=headers, timeout=20)
-            text = getattr(r, "text", "") or ""
-        except Exception as e:
-            raise KorailError(f"웹 조회 네트워크 오류: {e}")
 
-        self.last_response_text = text[:2000]
-        self.last_url = url
+        last_text = ""
+        last_url = ""
+        for url in candidate_urls:
+            _human_pause(0.3, 0.9)
+            try:
+                r = self.session.post(url, data=base_payload, headers=headers, timeout=20)
+                text = getattr(r, "text", "") or ""
+                status = getattr(r, "status_code", 0)
+            except Exception as e:
+                last_text = f"네트워크 오류: {e}"
+                continue
+            last_text = text
+            last_url = url
 
-        # MACRO 같은 차단이면 메시지 유지
-        if "MACRO" in text.upper() or "업데이트한 뒤" in text:
-            raise KorailError(
-                f"웹 조회도 차단됨 (MACRO 의심). 본문일부: {text[:300]}"
-            )
+            # 진단 정보 저장
+            self.last_response_text = text[:3000]
+            self.last_response_status = status
+            self.last_url = url
 
-        # 열차 행 추출 (간단 파싱)
-        # letskorail.com 응답은 JS 변수 혹은 테이블. 공통 필드들이 input hidden 으로
-        # 들어감. h_trn_no, h_dpt_tm, h_arv_tm, h_rsv_psb_flg, h_spe_rsv_cd 등을 찾음.
-        trains: List[Train] = []
+            if status >= 400:
+                continue
+            if "MACRO" in text.upper() or "업데이트한 뒤" in text:
+                continue
 
-        # 패턴: name="h_trn_no" value="101" 같은 hidden input 블록 반복
-        # 열차별로 tr 블록이 반복되므로, 한 블록을 잡는 패턴으로.
-        # 간단히 각 key별 value 리스트를 추출해 index로 묶는다.
+            # 파싱 시도: 여러 패턴으로 추출
+            trains = self._parse_web_search(text, dep, arr, date)
+            if trains:
+                return trains
+
+            # 열차가 비어 있으면 "조회 결과 없음" 키워드 여부로 판단
+            if ("조회결과" in text and ("없" in text or "0건" in text)) or \
+               "운행하는 열차가 없" in text:
+                return []
+            # 이 URL에서는 파싱 실패 → 다음 URL 시도
+
+        # 모든 URL 실패 — 진단 정보와 함께 예외
+        preview = (last_text or "")[:500].replace("\n", " ")
+        raise KorailError(
+            f"웹 조회 결과 파싱 실패 (url={last_url}, 본문길이={len(last_text)}) "
+            f"본문앞부분: {preview}"
+        )
+
+    def _parse_web_search(self, text: str, dep: str, arr: str, date: str) -> List[Train]:
+        """letskorail.com 응답 HTML에서 열차 정보 추출. 여러 패턴 시도."""
+
+        # 패턴 A: name="h_xxx" value="..." 스타일 hidden input
         def _extract_all(name: str) -> List[str]:
-            return re.findall(
-                rf'name="{re.escape(name)}"\s+value="([^"]*)"',
-                text,
-            )
+            # value가 name 앞에 있을 수도 있고 뒤에 있을 수도 있음
+            pat1 = rf'name=["\']?{re.escape(name)}["\']?\s+value=["\']([^"\']*)["\']'
+            pat2 = rf'value=["\']([^"\']*)["\']\s+name=["\']?{re.escape(name)}["\']?'
+            return re.findall(pat1, text) + re.findall(pat2, text)
 
         train_nos = _extract_all("h_trn_no")
-        dep_tms = _extract_all("h_dpt_tm")
-        arv_tms = _extract_all("h_arv_tm")
+        if not train_nos:
+            # 패턴 B: JavaScript 변수 스타일 - var h_trn_no = "..."
+            train_nos = re.findall(r'h_trn_no["\'\s:=]+["\']([^"\']+)["\']', text)
+
+        if not train_nos:
+            # 패턴 C: JSON 배열 내부 "h_trn_no":"..."
+            train_nos = re.findall(r'"h_trn_no"\s*:\s*"([^"]+)"', text)
+
+        if not train_nos:
+            return []
+
+        dep_tms = _extract_all("h_dpt_tm") or \
+                  re.findall(r'"h_dpt_tm"\s*:\s*"([^"]+)"', text)
+        arv_tms = _extract_all("h_arv_tm") or \
+                  re.findall(r'"h_arv_tm"\s*:\s*"([^"]+)"', text)
         dep_dts = _extract_all("h_dpt_dt") or [date] * len(train_nos)
         dep_codes = _extract_all("h_dpt_rs_stn_cd") or [_station_code(dep)] * len(train_nos)
         arv_codes = _extract_all("h_arv_rs_stn_cd") or [_station_code(arr)] * len(train_nos)
@@ -603,6 +655,7 @@ class KorailMobile:
         trn_gp = _extract_all("h_trn_gp_cd") or ["109"] * len(train_nos)
         run_dts = _extract_all("h_run_dt") or [date] * len(train_nos)
 
+        trains: List[Train] = []
         n = len(train_nos)
         for i in range(n):
             trains.append(Train(

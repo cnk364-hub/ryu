@@ -162,6 +162,20 @@ class ReservationEngine:
 
                 if not candidates:
                     duration_ms = int((time.time() - t0) * 1000)
+                    # 0편이면 파싱 실패 가능성 — 응답 스니펫을 로그에 남김
+                    if len(trains) == 0:
+                        try:
+                            snippet = (getattr(adapter._client, "last_response_text", "") or "")[:600]
+                            url = getattr(adapter._client, "last_url", "")
+                            method = getattr(adapter._client, "login_method", "")
+                            self._log(
+                                "WARNING",
+                                f"[{self.total_queries}회차] 0편 - 응답파싱 실패 가능. "
+                                f"login={method}, url={url}, 응답길이={len(snippet)}, "
+                                f"앞부분: {snippet[:300]}"
+                            )
+                        except Exception:
+                            pass
                     self._log("INFO", f"[{self.total_queries}회차] 가용 좌석 없음 ({len(trains)}편 조회, {duration_ms}ms)")
                     db.add_history(section, "", "NO_SEAT", duration_ms, f"{len(trains)}편 조회, 가용 없음")
                     self.consecutive_failures += 1
