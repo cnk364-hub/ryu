@@ -14,6 +14,7 @@ from korail_client import (
     Train,
     KorailError,
     LoginFailError,
+    MacroDetectedError,
     NeedToLoginError,
     SoldOutError,
     NoResultsError,
