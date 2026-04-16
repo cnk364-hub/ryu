@@ -25,8 +25,9 @@ URL_SEARCH = BASE + "seatMovie.ScheduleView"
 URL_RESERVE = BASE + "certification.TrainPsrmSales"
 
 DEFAULT_DEVICE = "AD"        # Android
-DEFAULT_VERSION = "240531001"
-DEFAULT_APP_VER = "240531001"
+DEFAULT_VERSION = "250901001"    # 2025.09.01 빌드 (최신에 가깝게)
+DEFAULT_APP_VER = "6.7.1"
+DEFAULT_OS_VER = "14"
 
 
 # KTX 역 코드 (2024~2026 기준, korail2 내장 매핑과 동일)
@@ -185,19 +186,14 @@ class KorailMobile:
 
     # ------------------------ 공통 ------------------------
     def _apply_ua(self):
+        # 코레일 공식 안드로이드 앱 형식의 User-Agent (MACRO 검출 회피)
         self.session.headers.update({
-            "User-Agent": random.choice([
-                "Mozilla/5.0 (Linux; Android 13; SM-G998N) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
-                "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
-            ]),
+            "User-Agent": f"Dalvik/2.1.0 (Linux; U; Android {DEFAULT_OS_VER}; "
+                          f"SM-S918N Build/UP1A.231005.007)",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "Keep-Alive",
         })
 
     def _post(self, url: str, data: Dict[str, Any], timeout: int = 15) -> Dict[str, Any]:
@@ -222,39 +218,79 @@ class KorailMobile:
         flag = _detect_input_flag(self.korail_id)
         normalized = _normalize_id(self.korail_id, flag)
 
-        payload = {
+        # MACRO 검출 회피용: 여러 버전 시도 (최신→구버전 순)
+        versions_to_try = [
+            self.version,     # 기본 (DEFAULT_VERSION)
+            "240826001",      # 2024.08.26
+            "230918001",      # 2023.09.18 (구 ver, 종종 통과)
+            "190606001",      # 오래된 안정 ver
+        ]
+
+        last_msg = ""
+        last_code = ""
+        for ver in versions_to_try:
+            self.version = ver
+            payload = self._build_login_payload(flag, normalized, ver)
+            data = self._post(URL_LOGIN, payload)
+
+            result = data.get("strResult")
+            if result == "SUCC":
+                self.logined = True
+                self.key = data.get("Key") or data.get("key")
+                self.membership_number = data.get("strMbCrdNo")
+                self.name = data.get("strCustNm")
+                self.email = data.get("strEmailAddr")
+                return True
+
+            code = (data.get("h_msg_cd") or "").strip()
+            msg = (data.get("h_msg_txt") or "").strip()
+            last_msg, last_code = msg, code
+
+            # MACRO/버전 관련 에러면 다음 버전 시도
+            if "MACRO" in code.upper() or "업데이트" in msg or "앱을" in msg:
+                continue
+            # 그 외 에러는 자격증명 문제일 가능성 — 즉시 실패
+            break
+
+        detail = (
+            f"입력유형={flag}("
+            f"{ {'1':'회원번호','2':'이메일','3':'전화번호'}.get(flag, '?') }"
+            f"), 정규화된ID={normalized}"
+        )
+        raise LoginFailError(
+            f"{last_msg or '알 수 없는 코레일 응답'} | {detail} | 코드={last_code}"
+        )
+
+    def _build_login_payload(self, flag: str, normalized: str, version: str) -> Dict[str, Any]:
+        """MACRO 검출 회피를 위해 실제 앱과 최대한 비슷한 payload 생성"""
+        # 가짜 FCM 토큰 (길이/형식만 비슷하게)
+        fake_token = "".join(
+            random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+            for _ in range(152)
+        )
+        return {
             "Device": self.device,
-            "Version": self.version,
+            "Version": version,
             "Passtype": "KR",
             "Id_Type": "HFN",
-            "Id_Dev": self.device,
-            "Id_Os": "12",  # 임의 OS 버전
-            "Id_Mac": self.device,
-            "Id_Manu": "Samsung",
-            "Id_Ven": "SM-G998N",
+            "Id_Dev": "RX" + "".join(random.choices("0123456789ABCDEF", k=14)),
+            "Id_Os": DEFAULT_OS_VER,
+            "Id_Mac": "02:00:00:" + ":".join(
+                "".join(random.choices("0123456789ABCDEF", k=2)) for _ in range(3)
+            ),
+            "Id_Manu": "samsung",
+            "Id_Ven": "SM-S918N",
+            "Id_Tk": fake_token,
+            "Id_Token": fake_token,
             "txtInputFlg": flag,
             "txtMemberNo": normalized,
             "txtPwd": self.password,
+            "hidMemberFlg": "1",
+            "hidAppVer": DEFAULT_APP_VER,
+            "checkFlag": "Y",
+            "LoginFlag": "N",
+            "loginType": "HFN",
         }
-
-        data = self._post(URL_LOGIN, payload)
-
-        result = data.get("strResult")
-        if result == "SUCC":
-            self.logined = True
-            self.key = data.get("Key") or data.get("key")
-            self.membership_number = data.get("strMbCrdNo")
-            self.name = data.get("strCustNm")
-            self.email = data.get("strEmailAddr")
-            return True
-
-        # 실패
-        h_msg_txt = data.get("h_msg_txt") or data.get("h_msg_cd") or ""
-        msg = h_msg_txt.strip() if isinstance(h_msg_txt, str) else str(h_msg_txt)
-        detail = f"입력유형={flag}({ {'1':'회원번호','2':'이메일','3':'전화번호'}.get(flag, '?') }), 정규화된ID={normalized}"
-        raise LoginFailError(
-            f"{msg or '알 수 없는 코레일 응답'} | {detail} | 코드={data.get('h_msg_cd')}"
-        )
 
     # ------------------------ 열차 조회 ------------------------
     def search_train(self, dep: str, arr: str, date: str, time_: str,
