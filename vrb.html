@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>사업참여 VRB(견적심의) 자동산정</title>
+<!-- SheetJS(xlsx) CDN — 오프라인이면 로드 실패 시 CSV로 자동 폴백 -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
+        onerror="window.__XLSX_FAILED=true"></script>
+<style>
+  :root{
+    --yellow:#fff7cc;       /* 입력셀 */
+    --yellow-border:#e6d56a;
+    --white:#ffffff;        /* 자동계산 */
+    --head:#2c3e50;
+    --head2:#34495e;
+    --good:#1e7e34;
+    --mid:#b8860b;
+    --warn:#c0392b;
+    --line:#d0d5dd;
+    --bg:#eef1f5;
+  }
+  *{box-sizing:border-box;}
+  body{
+    font-family:"Malgun Gothic","맑은 고딕",AppleSDGothicNeo,"Apple SD Gothic Neo",
+                 "Noto Sans KR",sans-serif;
+    margin:0; background:var(--bg); color:#1f2937; font-size:13px; line-height:1.5;
+  }
+  header{
+    background:var(--head); color:#fff; padding:16px 22px;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+  }
+  header h1{font-size:20px; margin:0;}
+  header .sub{font-size:12px; color:#cbd5e1; margin-top:4px;}
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap;}
+  button{
+    font-family:inherit; font-size:12.5px; cursor:pointer;
+    border:1px solid #1f2937; background:#fff; color:#1f2937;
+    border-radius:6px; padding:7px 12px;
+  }
+  button:hover{background:#f1f5f9;}
+  button.primary{background:#2563eb; color:#fff; border-color:#1d4ed8;}
+  button.primary:hover{background:#1d4ed8;}
+  button.ghost{background:transparent; color:#fff; border-color:#7f8c9b;}
+  button.ghost:hover{background:rgba(255,255,255,.12);}
+  button.mini{padding:3px 8px; font-size:11.5px; border-radius:5px;}
+  main{max-width:1180px; margin:18px auto; padding:0 16px 60px;}
+  section{
+    background:#fff; border:1px solid var(--line); border-radius:10px;
+    margin-bottom:18px; overflow:hidden;
+  }
+  .sec-title{
+    background:var(--head2); color:#fff; padding:9px 14px; font-size:14px; font-weight:700;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .sec-body{padding:14px;}
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px;}
+  label.fld{display:flex; flex-direction:column; gap:4px; font-size:12px; color:#475569;}
+  input,select{
+    font-family:inherit; font-size:13px; padding:7px 8px; border:1px solid #cbd5e1;
+    border-radius:6px; background:#fff; width:100%;
+  }
+  input.money,input.num{text-align:right;}
+  input.in{background:var(--yellow); border-color:var(--yellow-border);} /* 노란 입력 */
+  input:focus,select:focus{outline:2px solid #93c5fd; outline-offset:0;}
+  table{border-collapse:collapse; width:100%; font-size:12px;}
+  th,td{border:1px solid var(--line); padding:5px 6px; text-align:center;}
+  th{background:#f1f5f9; color:#334155; font-weight:700; white-space:nowrap;}
+  td input,td select{padding:4px 5px; font-size:12px;}
+  td.calc{background:#fafafa; text-align:right; font-variant-numeric:tabular-nums;}
+  .tbl-wrap{overflow-x:auto;}
+  .right{text-align:right;}
+  tfoot td{background:#eef2ff; font-weight:700;}
+  /* 요약 카드 */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:12px;}
+  .card{
+    border:1px solid var(--line); border-radius:10px; padding:12px 14px; background:#fff;
+  }
+  .card .k{font-size:12px; color:#64748b;}
+  .card .v{font-size:19px; font-weight:800; margin-top:4px; font-variant-numeric:tabular-nums;}
+  .card.accent{background:#0f172a; color:#fff;}
+  .card.accent .k{color:#94a3b8;}
+  /* 결론 박스 */
+  .verdict{padding:14px; border-radius:10px; font-size:15px; font-weight:700;}
+  .verdict.good{background:#e9f7ef; color:var(--good); border:1px solid #a7e3bf;}
+  .verdict.mid{background:#fff8e6; color:var(--mid); border:1px solid #f0d98a;}
+  .verdict.warn{background:#fdecea; color:var(--warn); border:1px solid #f3b6ae;}
+  .verdict small{display:block; font-weight:500; font-size:12.5px; margin-top:6px; color:inherit; opacity:.9;}
+  .errbox{
+    background:#fdecea; border:1px solid #f3b6ae; color:#c0392b;
+    border-radius:8px; padding:9px 12px; margin-bottom:12px; font-size:12.5px; display:none;
+  }
+  .hint{font-size:11.5px; color:#64748b; margin-top:6px;}
+  .row-flex{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .pill{font-size:11px; background:#eef2ff; color:#3730a3; border-radius:20px; padding:2px 9px;}
+  .ratio-row td{background:#f8fafc; color:#475569;}
+  @media print{
+    body{background:#fff; font-size:11px;}
+    header{background:#fff; color:#000; border-bottom:2px solid #000;}
+    header .sub,.toolbar{display:none;}
+    button{display:none;}
+    .sec-title{background:#e5e7eb; color:#000;}
+    section{break-inside:avoid; border-color:#999;}
+    .card.accent{background:#e5e7eb; color:#000;}
+    .no-print{display:none !important;}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>사업참여 VRB · 견적심의 자동산정</h1>
+    <div class="sub">핵심값만 입력 → 낙찰률·손익·원가적정성·사업성 자동판정 (오프라인 단일파일)</div>
+  </div>
+  <div class="toolbar">
+    <button class="ghost" onclick="loadSample()">샘플값 불러오기</button>
+    <button class="ghost" onclick="saveJSON()">JSON 저장</button>
+    <button class="ghost" onclick="document.getElementById('jsonFile').click()">JSON 불러오기</button>
+    <input type="file" id="jsonFile" accept=".json" style="display:none" onchange="loadJSON(event)">
+    <button class="ghost" onclick="exportXLSX()">엑셀 내보내기</button>
+    <button class="ghost" onclick="window.print()">인쇄</button>
+  </div>
+</header>
+
+<main>
+  <div id="errbox" class="errbox"></div>
+
+  <!-- ===== 결과 요약(상단 고정) ===== -->
+  <section>
+    <div class="sec-title">결과 요약 <span class="pill">부가세 별도 기준</span></div>
+    <div class="sec-body">
+      <div class="cards" id="cards"></div>
+      <div style="margin-top:14px" id="verdict"></div>
+    </div>
+  </section>
+
+  <!-- ===== (A) 사업 기본 ===== -->
+  <section>
+    <div class="sec-title">A. 사업 기본정보</div>
+    <div class="sec-body">
+      <div class="grid">
+        <label class="fld">사업명
+          <input class="in" id="projName" type="text" placeholder="예: ○○시스템 구축 사업">
+        </label>
+        <label class="fld">발주기관
+          <input class="in" id="orgName" type="text" placeholder="예: ○○공단">
+        </label>
+        <label class="fld">기초금액 (VAT 포함) [원]
+          <input class="in money" id="baseAmt" inputmode="numeric" placeholder="4,000,000,000">
+        </label>
+        <label class="fld">입찰금액 (VAT 포함) [원]
+          <input class="in money" id="bidAmt" inputmode="numeric" placeholder="4,000,000,000">
+        </label>
+        <label class="fld">영업비율 [%]
+          <div class="row-flex">
+            <input class="in num" id="opRate" inputmode="decimal" style="max-width:110px" placeholder="1">
+            <label class="row-flex" style="font-size:12px;color:#475569;gap:4px;cursor:pointer">
+              <input type="checkbox" id="opAuto" style="width:auto" checked> 자동추천
+            </label>
+            <span class="pill" id="opAutoInfo">추천 0%</span>
+          </div>
+          <span class="hint">예비비율 = 영업비율 + 1% (자동). 자동추천 해제 시 직접 입력값 우선.</span>
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== (B) 내부인건비 ===== -->
+  <section>
+    <div class="sec-title">
+      B. 내부인건비
+      <span class="row-flex no-print" style="gap:8px">
+        <label style="font-size:12px;color:#cbd5e1">투입개월
+          <select id="monthCount" onchange="rebuildMonths()" style="width:auto;display:inline-block;padding:3px 6px">
+            <option>6</option><option>12</option><option>18</option><option>24</option>
+          </select>
+        </label>
+        <button class="mini" onclick="addLaborRow()">+ 행 추가</button>
+      </span>
+    </div>
+    <div class="sec-body">
+      <div class="tbl-wrap">
+        <table id="laborTbl">
+          <thead><tr id="laborHead"></tr></thead>
+          <tbody id="laborBody"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="3" class="right">합계</td>
+              <td id="laborMMHeadGap"></td>
+              <td class="right" id="laborMMTotal">0.0</td>
+              <td></td>
+              <td class="right" id="laborCostTotal">0</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="hint">투입비용 = 등급단가 × Σ(월별 M·M). 등급단가는 직급으로 자동 룩업됩니다.</div>
+    </div>
+  </section>
+
+  <!-- ===== (C) 매입(물품) ===== -->
+  <section>
+    <div class="sec-title">C. 매입 (물품)
+      <button class="mini no-print" onclick="addBuyRow('goodsBody','물품')">+ 행 추가</button>
+    </div>
+    <div class="sec-body">
+      <div class="tbl-wrap"><table>
+        <thead><tr id="buyHeadGoods"></tr></thead>
+        <tbody id="goodsBody"></tbody>
+        <tfoot><tr><td colspan="8" class="right">물품 소계</td><td class="right" id="goodsSub">0</td><td></td></tr></tfoot>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ===== (D) 매입(용역) ===== -->
+  <section>
+    <div class="sec-title">D. 매입 (용역)
+      <button class="mini no-print" onclick="addBuyRow('svcBody','용역')">+ 행 추가</button>
+    </div>
+    <div class="sec-body">
+      <div class="tbl-wrap"><table>
+        <thead><tr id="buyHeadSvc"></tr></thead>
+        <tbody id="svcBody"></tbody>
+        <tfoot><tr><td colspan="8" class="right">용역 소계</td><td class="right" id="svcSub">0</td><td></td></tr></tfoot>
+      </table></div>
+      <div class="hint">실행단가 = 비교견적 중 저가 자동선택(한쪽만 입력 시 그 값). 실행금액 = 소요수량 × 실행단가.</div>
+    </div>
+  </section>
+
+  <!-- ===== (E) 프로젝트경비 ===== -->
+  <section>
+    <div class="sec-title">E. 프로젝트경비 (직접경비)
+      <button class="mini no-print" onclick="addExpRow()">+ 행 추가</button>
+    </div>
+    <div class="sec-body">
+      <div class="tbl-wrap"><table>
+        <thead><tr>
+          <th style="min-width:170px">항목</th><th>수량</th><th>단위</th><th>단가</th><th>금액</th><th class="no-print">삭제</th>
+        </tr></thead>
+        <tbody id="expBody"></tbody>
+        <tfoot><tr><td colspan="4" class="right">프로젝트경비 소계</td><td class="right" id="expSub">0</td><td class="no-print"></td></tr></tfoot>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ===== 원가적정성 표 ===== -->
+  <section>
+    <div class="sec-title">원가적정성 표</div>
+    <div class="sec-body tbl-wrap">
+      <table id="costTbl">
+        <thead><tr>
+          <th>구분</th><th>매출액</th><th>매입액</th><th>매출이익</th>
+          <th>직접경비</th><th>영업비</th><th>예비비</th><th>프로젝트손익</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><b>금액기준 [원]</b></td>
+            <td class="calc" id="c_sales">0</td>
+            <td class="calc" id="c_buy">0</td>
+            <td class="calc" id="c_gross">0</td>
+            <td class="calc" id="c_direct">0</td>
+            <td class="calc" id="c_op">0</td>
+            <td class="calc" id="c_reserve">0</td>
+            <td class="calc" id="c_profit">0</td>
+          </tr>
+          <tr class="ratio-row">
+            <td><b>비율기준 (매출액 대비)</b></td>
+            <td class="calc" id="r_sales">100.00%</td>
+            <td class="calc" id="r_buy">0.00%</td>
+            <td class="calc" id="r_gross">0.00%</td>
+            <td class="calc" id="r_direct">0.00%</td>
+            <td class="calc" id="r_op">0.00%</td>
+            <td class="calc" id="r_reserve">0.00%</td>
+            <td class="calc" id="r_profit">0.00%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="hint">매출액 = 입찰금액 ÷ 1.1 (VAT 별도). 매출액이 0이면 비율은 0으로 처리됩니다.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ===================== 상수: 인력등급단가표 ===================== */
+const GRADE_RATES = {            // 직급 → 인력등급단가 (원/월)
+  "임원":13000000, "부장":11000000, "차장":10000000,
+  "과장":9000000,  "대리":8000000,  "사원":7000000
+};
+const GRADES = Object.keys(GRADE_RATES);
+const RESIDENT = ["상주","부분상주","비상주"];
+
+/* (참고 보조표) 기술자 월평균임금 — 추후 "산정기준=월평균임금" 옵션 확장용 상수.
+   현재 계산에는 사용하지 않으며 주석 상수로만 보관한다.
+const ENGINEER_MONTHLY_WAGE = {
+  "기술사":0, "특급기술자":0, "고급기술자":0,
+  "중급기술자":0, "초급기술자":0
+}; // 필요 시 공인 통계값으로 채워 사용
+*/
+
+let MONTHS = 6;                  // 월별 M·M 입력 컬럼 수(투입개월)
+
+/* ===================== 포맷/유틸 ===================== */
+function num(v){                 // 콤마 제거 후 숫자, 빈값/이상값은 0
+  if(v===null||v===undefined) return 0;
+  const n = parseFloat(String(v).replace(/,/g,'').trim());
+  return isFinite(n) ? n : 0;
+}
+function fmt(n){                  // 천단위 콤마(정수 원)
+  const v = Math.round(num(n));
+  return v.toLocaleString('en-US');
+}
+function fmtMM(n){ return (Math.round(num(n)*100)/100).toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:2}); }
+function pct(x){ return (num(x)*100).toFixed(2)+'%'; }
+function safeDiv(a,b){ return num(b)===0 ? 0 : num(a)/num(b); }
+
+/* 입력 money 필드 콤마 자동표시 */
+function attachMoneyFormat(input){
+  input.addEventListener('blur',()=>{
+    const v = num(input.value);
+    if(input.value.trim()!=='' ) input.value = v.toLocaleString('en-US');
+  });
+}
+
+/* ===================== 테이블 헤더 빌드 ===================== */
+function buildLaborHead(){
+  const head = document.getElementById('laborHead');
+  let h = `<th style="min-width:120px">업무구분</th><th>직급</th><th>상주구분</th>`;
+  for(let i=1;i<=MONTHS;i++) h += `<th>${i}월</th>`;
+  h += `<th>합계 M·M</th><th>등급단가</th><th>투입비용</th><th class="no-print">삭제</th>`;
+  head.innerHTML = h;
+  // tfoot 의 빈칸(월 컬럼) 폭 맞추기
+  document.getElementById('laborMMHeadGap').setAttribute('colspan', MONTHS);
+}
+function buildBuyHead(id){
+  document.getElementById(id).innerHTML =
+    `<th style="min-width:70px">구분</th><th style="min-width:140px">품목</th><th>소요수량</th>`+
+    `<th>비교견적1 업체</th><th>단가1</th><th>비교견적2 업체</th><th>단가2</th>`+
+    `<th>실행단가</th><th>실행금액</th><th class="no-print">삭제</th>`;
+}
+
+/* ===================== 행 추가: 내부인건비 ===================== */
+function addLaborRow(data){
+  data = data || {};
+  const tb = document.getElementById('laborBody');
+  const tr = document.createElement('tr');
+  let monthCells = '';
+  for(let i=0;i<MONTHS;i++){
+    const val = (data.mm && data.mm[i]!=null) ? data.mm[i] : '';
+    monthCells += `<td><input class="in num mm" inputmode="decimal" style="width:54px" value="${val}"></td>`;
+  }
+  const gradeOpts = GRADES.map(g=>`<option ${data.grade===g?'selected':''}>${g}</option>`).join('');
+  const resOpts = RESIDENT.map(r=>`<option ${data.resident===r?'selected':''}>${r}</option>`).join('');
+  tr.innerHTML =
+    `<td><input class="in" type="text" value="${data.task||''}"></td>`+
+    `<td><select class="in grade">${gradeOpts}</select></td>`+
+    `<td><select class="in">${resOpts}</select></td>`+
+    monthCells+
+    `<td class="calc mmsum">0.0</td>`+
+    `<td class="calc rate">0</td>`+
+    `<td class="calc cost">0</td>`+
+    `<td class="no-print"><button class="mini" onclick="this.closest('tr').remove();recalc()">×</button></td>`;
+  tb.appendChild(tr);
+  recalc();
+}
+
+/* ===================== 행 추가: 매입(물품/용역) ===================== */
+function addBuyRow(bodyId, kind, data){
+  data = data || {};
+  const tb = document.getElementById(bodyId);
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td><input class="in" type="text" value="${data.gubun||kind}" style="width:64px"></td>`+
+    `<td><input class="in" type="text" value="${data.item||''}"></td>`+
+    `<td><input class="in num qty" inputmode="decimal" value="${data.qty??''}" style="width:64px"></td>`+
+    `<td><input class="in" type="text" value="${data.v1||''}" style="width:96px"></td>`+
+    `<td><input class="in money price1" inputmode="numeric" value="${data.p1??''}" style="width:108px"></td>`+
+    `<td><input class="in" type="text" value="${data.v2||''}" style="width:96px"></td>`+
+    `<td><input class="in money price2" inputmode="numeric" value="${data.p2??''}" style="width:108px"></td>`+
+    `<td class="calc exec">0</td>`+
+    `<td class="calc amt">0</td>`+
+    `<td class="no-print"><button class="mini" onclick="this.closest('tr').remove();recalc()">×</button></td>`;
+  tb.appendChild(tr);
+  tr.querySelectorAll('.money').forEach(attachMoneyFormat);
+  recalc();
+}
+
+/* ===================== 행 추가: 프로젝트경비 ===================== */
+function addExpRow(data){
+  data = data || {};
+  const tb = document.getElementById('expBody');
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td><input class="in" type="text" value="${data.item||''}"></td>`+
+    `<td><input class="in num qty" inputmode="decimal" value="${data.qty??''}" style="width:70px"></td>`+
+    `<td><input class="in" type="text" value="${data.unit||'식'}" style="width:64px"></td>`+
+    `<td><input class="in money price" inputmode="numeric" value="${data.price??''}" style="width:120px"></td>`+
+    `<td class="calc amt">0</td>`+
+    `<td class="no-print"><button class="mini" onclick="this.closest('tr').remove();recalc()">×</button></td>`;
+  tb.appendChild(tr);
+  tr.querySelectorAll('.money').forEach(attachMoneyFormat);
+  recalc();
+}
+
+/* ===== 투입개월 변경: 기존 월별값 보존하며 컬럼 재구성 ===== */
+function rebuildMonths(){
+  const newM = parseInt(document.getElementById('monthCount').value,10);
+  // 기존 행 데이터 추출
+  const rows = [...document.querySelectorAll('#laborBody tr')].map(readLaborRow);
+  MONTHS = newM;
+  buildLaborHead();
+  document.getElementById('laborBody').innerHTML='';
+  rows.forEach(r=>{
+    const mm = r.mm.slice(0,MONTHS);
+    while(mm.length<MONTHS) mm.push('');
+    addLaborRow({task:r.task,grade:r.grade,resident:r.resident,mm});
+  });
+  recalc();
+}
+function readLaborRow(tr){
+  const inputs = tr.querySelectorAll('input,select');
+  const task = inputs[0].value;
+  const grade = tr.querySelector('.grade').value;
+  const resident = inputs[2].value;
+  const mm = [...tr.querySelectorAll('.mm')].map(i=>i.value);
+  return {task,grade,resident,mm};
+}
+
+/* ===================== 핵심 계산 ===================== */
+function recalc(){
+  clearError();
+
+  const baseAmt = num(document.getElementById('baseAmt').value);   // 기초(VAT포함)
+  const bidAmt  = num(document.getElementById('bidAmt').value);    // 입찰(VAT포함)
+
+  // 낙찰률, 매출액(VAT별도)
+  const winRate = safeDiv(bidAmt, baseAmt);
+  const sales   = bidAmt / 1.1;
+
+  // --- 내부인건비 ---
+  let laborTotal = 0, mmTotalAll = 0;
+  document.querySelectorAll('#laborBody tr').forEach(tr=>{
+    const grade = tr.querySelector('.grade').value;
+    const rate  = GRADE_RATES[grade]||0;
+    let mmSum = 0;
+    tr.querySelectorAll('.mm').forEach(i=> mmSum += num(i.value));
+    const cost = rate * mmSum;
+    tr.querySelector('.mmsum').textContent = fmtMM(mmSum);
+    tr.querySelector('.rate').textContent  = fmt(rate);
+    tr.querySelector('.cost').textContent  = fmt(cost);
+    laborTotal += cost; mmTotalAll += mmSum;
+  });
+  document.getElementById('laborMMTotal').textContent  = fmtMM(mmTotalAll);
+  document.getElementById('laborCostTotal').textContent= fmt(laborTotal);
+
+  // --- 매입(물품/용역): 실행단가=저가 자동, 실행금액=수량×실행단가 ---
+  function sumBuy(bodyId){
+    let sub=0;
+    document.querySelectorAll('#'+bodyId+' tr').forEach(tr=>{
+      const qty = num(tr.querySelector('.qty').value);
+      const p1raw = tr.querySelector('.price1').value.trim();
+      const p2raw = tr.querySelector('.price2').value.trim();
+      const p1 = num(p1raw), p2 = num(p2raw);
+      let exec;
+      if(p1raw!=='' && p2raw!==''){ exec = Math.min(p1,p2); }
+      else if(p1raw!==''){ exec = p1; }
+      else if(p2raw!==''){ exec = p2; }
+      else { exec = 0; }
+      const amt = qty * exec;
+      tr.querySelector('.exec').textContent = fmt(exec);
+      tr.querySelector('.amt').textContent  = fmt(amt);
+      sub += amt;
+    });
+    return sub;
+  }
+  const goodsSub = sumBuy('goodsBody');
+  const svcSub   = sumBuy('svcBody');
+  document.getElementById('goodsSub').textContent = fmt(goodsSub);
+  document.getElementById('svcSub').textContent   = fmt(svcSub);
+  const buyTotal = goodsSub + svcSub;                 // 매입액
+
+  // --- 프로젝트경비 ---
+  let expSub = 0;
+  document.querySelectorAll('#expBody tr').forEach(tr=>{
+    const qty = num(tr.querySelector('.qty').value);
+    const price = num(tr.querySelector('.price').value);
+    const amt = qty*price;
+    tr.querySelector('.amt').textContent = fmt(amt);
+    expSub += amt;
+  });
+  document.getElementById('expSub').textContent = fmt(expSub);
+
+  // --- 종합 ---
+  const grossProfit = sales - buyTotal;               // 매출이익
+  const directCost  = laborTotal + expSub;            // 직접경비
+
+  // 영업비율 자동추천: 영업비 적용 전 손익률 = (매출이익-직접경비)/매출액
+  const preOpRate = safeDiv(grossProfit - directCost, sales);
+  let recommend;
+  if(preOpRate < 0.125) recommend = 0;
+  else if(preOpRate < 0.25) recommend = 1;
+  else recommend = 3;
+  document.getElementById('opAutoInfo').textContent = '추천 '+recommend+'%';
+
+  const auto = document.getElementById('opAuto').checked;
+  const opRateField = document.getElementById('opRate');
+  if(auto){ opRateField.value = recommend; opRateField.readOnly = true; opRateField.classList.remove('in'); opRateField.classList.add('in'); }
+  else { opRateField.readOnly = false; }
+  const opRatePct = (auto ? recommend : num(opRateField.value)) / 100;
+  const reservePct = opRatePct + 0.01;                // 예비비율 = 영업비율 + 1%
+
+  const opCost      = sales * opRatePct;              // 영업비
+  const reserveCost = sales * reservePct;             // 예비비
+  const projProfit  = grossProfit - (directCost + opCost + reserveCost); // 프로젝트손익
+  const profitRate  = safeDiv(projProfit, sales);     // 손익률
+
+  /* ----- 요약 카드 ----- */
+  document.getElementById('cards').innerHTML = `
+    <div class="card"><div class="k">낙찰률</div><div class="v">${pct(winRate)}</div></div>
+    <div class="card"><div class="k">매출액 (VAT별도)</div><div class="v">${fmt(sales)}</div></div>
+    <div class="card"><div class="k">매입액</div><div class="v">${fmt(buyTotal)}</div></div>
+    <div class="card"><div class="k">직접경비</div><div class="v">${fmt(directCost)}</div></div>
+    <div class="card accent"><div class="k">프로젝트손익</div><div class="v">${fmt(projProfit)}</div></div>
+    <div class="card accent"><div class="k">손익률</div><div class="v">${pct(profitRate)}</div></div>`;
+
+  /* ----- 원가적정성 표 ----- */
+  setTxt('c_sales',fmt(sales));   setTxt('c_buy',fmt(buyTotal)); setTxt('c_gross',fmt(grossProfit));
+  setTxt('c_direct',fmt(directCost)); setTxt('c_op',fmt(opCost)); setTxt('c_reserve',fmt(reserveCost));
+  setTxt('c_profit',fmt(projProfit));
+  setTxt('r_sales',pct(safeDiv(sales,sales)));
+  setTxt('r_buy',pct(safeDiv(buyTotal,sales)));
+  setTxt('r_gross',pct(safeDiv(grossProfit,sales)));
+  setTxt('r_direct',pct(safeDiv(directCost,sales)));
+  setTxt('r_op',pct(safeDiv(opCost,sales)));
+  setTxt('r_reserve',pct(safeDiv(reserveCost,sales)));
+  setTxt('r_profit',pct(profitRate));
+
+  /* ----- VRB 결론 ----- */
+  renderVerdict(profitRate);
+
+  /* ----- 입력 검증 경고 ----- */
+  validateInputs(baseAmt, bidAmt, sales);
+
+  // 외부 접근용 마지막 계산값 저장
+  window.__calc = {projName:val('projName'),orgName:val('orgName'),baseAmt,bidAmt,winRate,sales,
+    buyTotal,goodsSub,svcSub,laborTotal,mmTotalAll,expSub,grossProfit,directCost,
+    opRatePct,reservePct,opCost,reserveCost,projProfit,profitRate,preOpRate};
+}
+
+function renderVerdict(profitRate){
+  const box = document.getElementById('verdict');
+  let cls,label,note;
+  if(profitRate >= 0.15){ cls='good'; label='사업성 양호'; note='목표 손익률(15% 이상)을 충족합니다. 사업 참여를 권고합니다.'; }
+  else if(profitRate >= 0.10){ cls='mid'; label='사업성 보통'; note='손익률 10~15% 구간입니다. 직접경비·매입 견적의 추가 절감 여지를 검토하세요.'; }
+  else { cls='warn'; label='사업성 주의'; note='손익률 10% 미만입니다. 투찰가·견적을 재검토하시기 바랍니다.'; }
+  box.className = 'verdict '+cls;
+  box.innerHTML = `VRB 결론 : ${label} <span style="font-weight:800">(손익률 ${pct(profitRate)})</span>
+    <small>${note}</small>`;
+}
+
+/* ----- 보조 ----- */
+function setTxt(id,t){ document.getElementById(id).textContent = t; }
+function val(id){ const e=document.getElementById(id); return e?e.value:''; }
+function clearError(){ const b=document.getElementById('errbox'); b.style.display='none'; b.innerHTML=''; }
+function showError(msgs){
+  const b=document.getElementById('errbox');
+  b.innerHTML = '⚠ '+msgs.join('<br>⚠ ');
+  b.style.display='block';
+}
+function validateInputs(baseAmt,bidAmt,sales){
+  const errs=[];
+  if(baseAmt<0||bidAmt<0) errs.push('기초금액·입찰금액은 음수가 될 수 없습니다.');
+  if(baseAmt===0) errs.push('기초금액이 비어있어 낙찰률을 0으로 처리했습니다.');
+  if(bidAmt===0) errs.push('입찰금액이 비어있어 매출액을 0으로 처리했습니다.');
+  document.querySelectorAll('#laborBody .mm, #goodsBody .qty, #svcBody .qty, #expBody .qty').forEach(i=>{
+    if(num(i.value)<0) errs.push('음수 입력이 감지되었습니다. 0 이상 값을 입력하세요.');
+  });
+  if(errs.length) showError([...new Set(errs)]); else clearError();
+}
+
+/* ===================== 샘플값 (자가검증: 손익률 약 15%) ===================== */
+function loadSample(){
+  document.getElementById('projName').value = '차세대 정보시스템 구축 사업';
+  document.getElementById('orgName').value  = '○○공단';
+  setMoney('baseAmt',4000000000);
+  setMoney('bidAmt',4000000000);
+  document.getElementById('opAuto').checked = true;
+  document.getElementById('monthCount').value = '6'; MONTHS=6; buildLaborHead();
+
+  // 내부인건비: 6명, 총 81.5 M·M (월별로 균등 분배)
+  const labor = [
+    {task:'PM',          grade:'과장', resident:'상주',    mm:8.0},
+    {task:'분석/설계',    grade:'대리', resident:'상주',    mm:12.0},
+    {task:'개발(코어)',   grade:'사원', resident:'상주',    mm:24.0},
+    {task:'개발(연계)',   grade:'사원', resident:'상주',    mm:20.0},
+    {task:'개발(화면)',   grade:'사원', resident:'부분상주', mm:13.5},
+    {task:'품질/테스트',  grade:'사원', resident:'비상주',   mm:4.0},
+  ];
+  document.getElementById('laborBody').innerHTML='';
+  labor.forEach(r=> addLaborRow({task:r.task,grade:r.grade,resident:r.resident,mm:spread(r.mm,MONTHS)}));
+
+  // 매입(물품): 소계 1,370,000,000
+  document.getElementById('goodsBody').innerHTML='';
+  addBuyRow('goodsBody','물품',{gubun:'물품',item:'WAS/서버',  qty:10,v1:'A사',p1:80000000,v2:'B사',p2:78000000});
+  addBuyRow('goodsBody','물품',{gubun:'물품',item:'스토리지',  qty:5, v1:'A사',p1:60000000,v2:'B사',p2:62000000});
+  addBuyRow('goodsBody','물품',{gubun:'물품',item:'SW 라이선스',qty:20,v1:'C사',p1:15000000,v2:'D사',p2:14500000});
+
+  // 매입(용역): 소계 980,000,000  →  매입액 합계 2,350,000,000
+  document.getElementById('svcBody').innerHTML='';
+  addBuyRow('svcBody','용역',{gubun:'용역',item:'시스템구축 외주', qty:1,v1:'E사',p1:600000000,v2:'F사',p2:580000000});
+  addBuyRow('svcBody','용역',{gubun:'용역',item:'데이터 이행',    qty:1,v1:'E사',p1:250000000,v2:'G사',p2:248000000});
+  addBuyRow('svcBody','용역',{gubun:'용역',item:'안정화/유지보수', qty:1,v1:'E사',p1:155000000,v2:'F사',p2:152000000});
+
+  // 프로젝트경비: 소계 21,000,000
+  document.getElementById('expBody').innerHTML='';
+  [['사업관리비(월)',12,'월',1000000],
+   ['제안 인건비',1,'식',3000000],
+   ['산출물 인쇄/제본',1,'식',1500000],
+   ['개발환경 구축',1,'식',2000000],
+   ['차량/유류비',1,'식',1000000],
+   ['사무용품/통신비',1,'식',800000],
+   ['출장/보고회비',1,'식',700000],
+   ['보안성검토·인증대응',1,'식',0]
+  ].forEach(([item,qty,unit,price])=> addExpRow({item,qty,unit,price}));
+
+  recalc();
+}
+// 총 M·M 을 month 수만큼 균등 분배(합계 보존)
+function spread(total, m){
+  const each = total/m;
+  return Array.from({length:m},()=>+(each.toFixed(4)));
+}
+function setMoney(id,v){ document.getElementById(id).value = Number(v).toLocaleString('en-US'); }
+
+/* ===================== JSON 저장/불러오기 ===================== */
+function gatherState(){
+  return {
+    projName:val('projName'), orgName:val('orgName'),
+    baseAmt:num(val('baseAmt')), bidAmt:num(val('bidAmt')),
+    opAuto:document.getElementById('opAuto').checked, opRate:num(val('opRate')),
+    months:MONTHS,
+    labor:[...document.querySelectorAll('#laborBody tr')].map(readLaborRow),
+    goods:readBuy('goodsBody'), svc:readBuy('svcBody'),
+    exp:[...document.querySelectorAll('#expBody tr')].map(tr=>{
+      const i=tr.querySelectorAll('input');
+      return {item:i[0].value, qty:num(i[1].value), unit:i[2].value, price:num(i[3].value)};
+    })
+  };
+}
+function readBuy(bodyId){
+  return [...document.querySelectorAll('#'+bodyId+' tr')].map(tr=>{
+    const i=tr.querySelectorAll('input');
+    return {gubun:i[0].value,item:i[1].value,qty:num(i[2].value),
+            v1:i[3].value,p1:num(i[4].value),v2:i[5].value,p2:num(i[6].value)};
+  });
+}
+function saveJSON(){
+  const blob = new Blob([JSON.stringify(gatherState(),null,2)],{type:'application/json'});
+  downloadBlob(blob, (val('projName')||'vrb')+'.json');
+}
+function loadJSON(ev){
+  const file = ev.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const s = JSON.parse(e.target.result);
+      applyState(s);
+    }catch(err){ showError(['JSON 파일을 읽을 수 없습니다: '+err.message]); }
+    ev.target.value='';
+  };
+  reader.readAsText(file);
+}
+function applyState(s){
+  document.getElementById('projName').value = s.projName||'';
+  document.getElementById('orgName').value  = s.orgName||'';
+  setMoney('baseAmt', s.baseAmt||0); setMoney('bidAmt', s.bidAmt||0);
+  document.getElementById('opAuto').checked = !!s.opAuto;
+  document.getElementById('opRate').value = s.opRate??'';
+  MONTHS = s.months||6;
+  document.getElementById('monthCount').value = String(MONTHS); buildLaborHead();
+  buildBuyHead('buyHeadGoods'); buildBuyHead('buyHeadSvc');
+  document.getElementById('laborBody').innerHTML='';
+  (s.labor||[]).forEach(r=> addLaborRow(r));
+  document.getElementById('goodsBody').innerHTML='';
+  (s.goods||[]).forEach(r=> addBuyRow('goodsBody','물품',r));
+  document.getElementById('svcBody').innerHTML='';
+  (s.svc||[]).forEach(r=> addBuyRow('svcBody','용역',r));
+  document.getElementById('expBody').innerHTML='';
+  (s.exp||[]).forEach(r=> addExpRow(r));
+  recalc();
+}
+function downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+/* ===================== 엑셀 내보내기 (xlsx, 오프라인 시 CSV 폴백) ===================== */
+function exportXLSX(){
+  recalc();
+  const c = window.__calc;
+  const rows = [
+    ['사업참여 VRB 견적심의 산정 결과'],
+    ['사업명', c.projName],['발주기관', c.orgName],
+    [],
+    ['[입력]'],
+    ['기초금액(VAT포함)', c.baseAmt],['입찰금액(VAT포함)', c.bidAmt],
+    ['영업비율(%)', +(c.opRatePct*100).toFixed(2)],['예비비율(%)', +(c.reservePct*100).toFixed(2)],
+    [],
+    ['[핵심 결과 — 부가세 별도]'],
+    ['낙찰률(%)', +(c.winRate*100).toFixed(2)],
+    ['매출액', Math.round(c.sales)],
+    ['매입액(물품+용역)', Math.round(c.buyTotal)],
+    ['  물품 소계', Math.round(c.goodsSub)],
+    ['  용역 소계', Math.round(c.svcSub)],
+    ['매출이익', Math.round(c.grossProfit)],
+    ['내부인건비 소계', Math.round(c.laborTotal)],
+    ['총 투입 M·M', +c.mmTotalAll.toFixed(2)],
+    ['프로젝트경비 소계', Math.round(c.expSub)],
+    ['직접경비', Math.round(c.directCost)],
+    ['영업비', Math.round(c.opCost)],
+    ['예비비', Math.round(c.reserveCost)],
+    ['프로젝트손익', Math.round(c.projProfit)],
+    ['손익률(%)', +(c.profitRate*100).toFixed(2)],
+    [],
+    ['[원가적정성 — 금액기준]','매출액','매입액','매출이익','직접경비','영업비','예비비','프로젝트손익'],
+    ['금액', Math.round(c.sales),Math.round(c.buyTotal),Math.round(c.grossProfit),
+       Math.round(c.directCost),Math.round(c.opCost),Math.round(c.reserveCost),Math.round(c.projProfit)],
+    ['비율(매출대비 %)', 100,
+       +(safeDiv(c.buyTotal,c.sales)*100).toFixed(2),
+       +(safeDiv(c.grossProfit,c.sales)*100).toFixed(2),
+       +(safeDiv(c.directCost,c.sales)*100).toFixed(2),
+       +(safeDiv(c.opCost,c.sales)*100).toFixed(2),
+       +(safeDiv(c.reserveCost,c.sales)*100).toFixed(2),
+       +(c.profitRate*100).toFixed(2)],
+  ];
+  const fname = (c.projName||'vrb')+'_산정결과';
+  if(window.XLSX && !window.__XLSX_FAILED){
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'VRB');
+    XLSX.writeFile(wb, fname+'.xlsx');
+  }else{
+    // 오프라인 폴백: CSV (UTF-8 BOM 으로 한글깨짐 방지)
+    const csv = rows.map(r=> r.map(cell=>{
+      const s = (cell==null?'':String(cell));
+      return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+    }).join(',')).join('\r\n');
+    const blob = new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
+    downloadBlob(blob, fname+'.csv');
+    showError(['엑셀(xlsx) 라이브러리를 불러오지 못해 CSV로 내보냈습니다. (오프라인 환경)']);
+  }
+}
+
+/* ===================== 초기화 ===================== */
+function init(){
+  buildLaborHead();
+  buildBuyHead('buyHeadGoods');
+  buildBuyHead('buyHeadSvc');
+  // 입력 변화 → 실시간 재계산 (이벤트 위임)
+  document.addEventListener('input', e=>{
+    if(e.target.closest('main')) recalc();
+  });
+  document.addEventListener('change', e=>{
+    if(e.target.id==='opAuto' || e.target.matches('select')) recalc();
+  });
+  document.querySelectorAll('.money').forEach(attachMoneyFormat);
+  loadSample();   // 시작 시 샘플값 + 자가검증 결과 화면 표시
+}
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
