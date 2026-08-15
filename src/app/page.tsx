@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useAgentStore } from '@/store/agentStore';
 import RiskBadge from '@/components/dashboard/RiskBadge';
 import DashboardTab from '@/app/dashboard/page';
@@ -61,6 +62,12 @@ export default function Home() {
             <RiskBadge level={riskLevel} size="lg" />
           </div>
           <div className="flex items-center gap-4">
+            <Link
+              href="/vrb"
+              className="rounded-md border border-blue-700/60 bg-blue-900/20 px-3 py-1.5 text-xs font-medium text-blue-300 hover:bg-blue-900/40"
+            >
+              VRB 손익 자동산출
+            </Link>
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <span
                 className={`inline-block h-2 w-2 rounded-full ${
