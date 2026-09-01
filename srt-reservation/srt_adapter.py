@@ -17,23 +17,39 @@ try:
     except ImportError:
         SeatType = None
     SRT_AVAILABLE = True
-except Exception:  # pragma: no cover
-    SRT_AVAILABLE = False
+except ImportError:
+    try:
+        from srt import SRT, SRTError, SRTLoginError, SRTNotLoggedInError
+        try:
+            from srt import SeatType
+        except ImportError:
+            SeatType = None
+        SRT_AVAILABLE = True
+    except ImportError:
+        try:
+            from SRTrain import SRT, SRTError, SRTLoginError, SRTNotLoggedInError
+            try:
+                from SRTrain import SeatType
+            except ImportError:
+                SeatType = None
+            SRT_AVAILABLE = True
+        except ImportError:
+            SRT_AVAILABLE = False
 
-    class _Dummy:
-        pass
+            class _Dummy:
+                pass
 
-    SRT = _Dummy  # type: ignore
-    SeatType = None  # type: ignore
+            SRT = _Dummy  # type: ignore
+            SeatType = None  # type: ignore
 
-    class SRTError(Exception):
-        pass
+            class SRTError(Exception):
+                pass
 
-    class SRTLoginError(Exception):
-        pass
+            class SRTLoginError(Exception):
+                pass
 
-    class SRTNotLoggedInError(Exception):
-        pass
+            class SRTNotLoggedInError(Exception):
+                pass
 
 
 USER_AGENTS = [
@@ -93,7 +109,6 @@ class SRTAdapter:
         if self._client is None:
             return
         try:
-            # SRT 라이브러리는 내부 _session 을 가짐
             sess = getattr(self._client, "_session", None) or getattr(self._client, "session", None)
             if sess is not None:
                 sess.headers.update({"User-Agent": pick_user_agent()})
@@ -103,7 +118,6 @@ class SRTAdapter:
     def login(self) -> bool:
         if not SRT_AVAILABLE:
             raise RuntimeError("SRT 라이브러리가 설치되어 있지 않습니다.")
-        # SRT() 생성자가 자동 로그인 (verbose=False 로 깔끔하게)
         try:
             self._client = SRT(self.srt_id, self.password, verbose=False)
         except SRTLoginError as e:
@@ -129,11 +143,6 @@ class SRTAdapter:
         time_from: str,
         passengers: int = 1,
     ) -> List[TrainCandidate]:
-        """
-        SRT 열차 조회.
-        date: YYYYMMDD
-        time_from: HHMMSS 또는 HHMM 또는 HH:MM
-        """
         if self._client is None:
             self.login()
         self._apply_random_ua()
@@ -149,7 +158,7 @@ class SRTAdapter:
                 arr=arr,
                 date=date,
                 time=t,
-                available_only=False,  # 가용 여부 자체 판단
+                available_only=False,
             )
         except SRTNotLoggedInError:
             self.relogin()
@@ -157,18 +166,15 @@ class SRTAdapter:
                 dep=dep, arr=arr, date=date, time=t, available_only=False,
             )
         except Exception as e:
-            # 조회 자체 실패
             raise
 
         results: List[TrainCandidate] = []
         for tr in trains:
-            # SRT 라이브러리 Train 객체 속성 (라이브러리 버전에 따라 약간 다름)
             train_no = getattr(tr, "train_number", "") or getattr(tr, "train_no", "")
             train_name = getattr(tr, "train_name", "SRT") or "SRT"
             dep_time = getattr(tr, "dep_time", "")
             arr_time = getattr(tr, "arr_time", "")
 
-            # 좌석 가용 여부
             has_general = False
             has_special = False
             try:
@@ -178,7 +184,6 @@ class SRTAdapter:
                     has_special = bool(tr.special_seat_available())
             except Exception:
                 pass
-            # 대체 판정: seat_available
             if not has_general and not has_special:
                 try:
                     if hasattr(tr, "seat_available"):
@@ -202,13 +207,9 @@ class SRTAdapter:
 
     def reserve(self, train_candidate: TrainCandidate, seat_class: str = "ANY",
                 passengers: int = 1):
-        """
-        예약 시도. seat_class: GENERAL / SPECIAL / ANY
-        """
         if self._client is None:
             self.login()
 
-        # SeatType 선택
         sp = None
         if SeatType is not None:
             try:
@@ -225,7 +226,6 @@ class SRTAdapter:
         if sp is not None:
             kwargs["special_seat"] = sp
 
-        # 승객 인원 (SRT 라이브러리는 Passenger 객체 리스트 받음)
         try:
             from SRT import Adult  # type: ignore
             kwargs["passengers"] = [Adult(passengers)]
@@ -236,7 +236,6 @@ class SRTAdapter:
 
     @staticmethod
     def within_time_range(dep_time: str, time_from: str, time_to: str) -> bool:
-        """열차 출발시각이 사용자 설정 범위 내인지 확인"""
         def norm(v: str) -> str:
             v = (v or "").replace(":", "")
             if len(v) == 4:
