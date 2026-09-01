@@ -1,35 +1,509 @@
 <!DOCTYPE html>
-<html lang="ko" class="dark">
+<html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>축산 AI 에이전트 데모 - 가축 질병 조기경보 시스템</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: { extend: {} }
-    };
-  </script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-  <style>
-    body { background: #0a0f1a; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #1f2937; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
-    @keyframes pulse-border { 0%,100%{opacity:.3} 50%{opacity:1} }
-    .risk-emergency { box-shadow: inset 0 0 0 2px rgba(239,68,68,0.5); animation: pulse-border 1.5s ease-in-out infinite; }
-    .risk-danger { box-shadow: inset 0 0 0 2px rgba(249,115,22,0.4); }
-    .risk-caution { box-shadow: inset 0 0 0 2px rgba(234,179,8,0.3); }
-    @keyframes spin-slow { to { transform: rotate(360deg); } }
-    .agent-pulse { animation: pulse-border 1.5s ease-in-out infinite; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>축산 AI 에이전트 데모 - 가축 질병 조기경보 시스템</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0f1a;color:#e5e7eb;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;min-height:100vh}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#1f2937;border-radius:3px}::-webkit-scrollbar-thumb{background:#4b5563;border-radius:3px}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+@keyframes ping{75%,100%{transform:scale(2);opacity:0}}
+@keyframes pulseBorder{0%,100%{opacity:.3}50%{opacity:1}}
+.risk-emergency{box-shadow:inset 0 0 0 2px rgba(239,68,68,.5);animation:pulseBorder 1.5s ease-in-out infinite}
+.risk-danger{box-shadow:inset 0 0 0 2px rgba(249,115,22,.4)}
+.risk-caution{box-shadow:inset 0 0 0 2px rgba(234,179,8,.3)}
+.header{border-bottom:1px solid #1f2937;background:rgba(17,24,39,.8);backdrop-filter:blur(8px);padding:12px 24px;display:flex;justify-content:space-between;align-items:center}
+.header-left{display:flex;align-items:center;gap:16px}
+.header-title{font-size:18px;font-weight:700;color:#fff}
+.header-title span{color:#3B82F6}
+.header-sub{font-size:11px;color:#6b7280}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600}
+.badge-dot{width:8px;height:8px;border-radius:50%}
+.header-right{display:flex;align-items:center;gap:16px;font-size:12px;color:#9ca3af}
+.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.tabs{display:flex;border-bottom:1px solid #1f2937;background:rgba(17,24,39,.5);padding:0 24px}
+.tab{padding:12px 20px;font-size:14px;font-weight:500;color:#6b7280;cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:#9ca3af}
+.tab.active{color:#3B82F6;border-bottom-color:#3B82F6}
+.main{padding:20px 24px;max-width:1400px;margin:0 auto}
+.hidden{display:none!important}
+.row{display:flex;gap:16px}
+.col-left{flex:2;display:flex;flex-direction:column;gap:16px}
+.col-right{flex:1;display:flex;flex-direction:column;gap:12px}
+.card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:16px}
+.card-title{font-size:13px;font-weight:600;color:#9ca3af;margin-bottom:8px}
+.metric-card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:14px}
+.metric-card.alert{border-color:rgba(239,68,68,.4);background:rgba(127,29,29,.15)}
+.metric-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:4px}
+.metric-value{font-size:24px;font-weight:700;color:#fff}
+.metric-value.alert{color:#f87171}
+.metric-unit{font-size:13px;color:#6b7280;margin-left:4px}
+.metric-desc{font-size:11px;color:#4b5563;margin-top:2px}
+.recommend-box{border-left:4px solid #6b7280;background:#111827;border-radius:0 8px 8px 0;padding:14px}
+.recommend-title{font-size:13px;font-weight:600;color:#9ca3af;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.recommend-text{font-size:13px;color:#9ca3af;line-height:1.6;white-space:pre-wrap}
+.log-container{max-height:350px;overflow-y:auto;padding:8px}
+.log-entry{border-left:3px solid;background:rgba(17,24,39,.5);border-radius:0 6px 6px 0;padding:10px 12px;margin-bottom:8px}
+.log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.log-agent{font-size:11px;font-weight:700}
+.log-meta{font-size:10px;color:#4b5563}
+.log-content{font-size:12px;color:#9ca3af;line-height:1.5}
+.log-running{color:#facc15;font-size:11px;display:flex;align-items:center;gap:4px}
+.log-running-dot{width:6px;height:6px;border-radius:50%;background:#facc15;animation:pulse 1.5s infinite}
+.scenarios-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+@media(max-width:900px){.scenarios-grid{grid-template-columns:1fr}.row{flex-direction:column}}
+.scenario-card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;cursor:pointer;transition:all .2s;text-align:left}
+.scenario-card:hover{border-color:#374151;background:#1f2937}
+.scenario-card.active{border-color:#3B82F6;background:rgba(59,130,246,.05)}
+.scenario-card.disabled{opacity:.5;cursor:not-allowed}
+.scenario-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:12px}
+.scenario-title{font-size:15px;font-weight:700;color:#fff;margin-bottom:8px}
+.scenario-desc{font-size:13px;color:#9ca3af;line-height:1.5;margin-bottom:10px}
+.scenario-detail{font-size:11px;color:#6b7280;padding-left:12px;margin-bottom:3px}
+.scenario-detail::before{content:"• ";color:#4b5563}
+.stepper{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px}
+.stepper-title{font-size:14px;font-weight:600;color:#9ca3af;margin-bottom:16px}
+.step{display:flex;align-items:flex-start;gap:12px;margin-bottom:4px}
+.step-indicator{display:flex;flex-direction:column;align-items:center}
+.step-circle{width:28px;height:28px;border-radius:50%;border:2px solid #4b5563;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#6b7280;flex-shrink:0}
+.step-circle.completed{border-color:transparent;color:#fff}
+.step-circle.current{animation:pulse 1.5s infinite}
+.step-line{width:2px;height:16px;background:#4b5563;flex-shrink:0}
+.step-content{padding-bottom:12px}
+.step-label{font-size:13px;font-weight:500;color:#6b7280}
+.step-label.active{color:#fff}
+.step-status{font-size:11px;display:flex;align-items:center;gap:4px}
+.step-desc{font-size:11px;color:#4b5563}
+.agents-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:24px}
+.agent-card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:16px;border-top:3px solid}
+.agent-icon{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;margin-bottom:10px}
+.agent-name{font-size:14px;font-weight:700;color:#fff}
+.agent-name-ko{font-size:12px;color:#6b7280}
+.agent-tech{display:inline-block;background:#1f2937;padding:2px 8px;border-radius:4px;font-size:11px;color:#9ca3af;margin:8px 0}
+.agent-stats{border-top:1px solid #1f2937;padding-top:10px;margin-top:10px}
+.agent-stat{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+.agent-stat-label{color:#6b7280}
+.agent-stat-value{color:#d1d5db}
+.agent-decision{background:#0a0f1a;border-radius:6px;padding:8px;margin-top:8px;font-size:11px;color:#9ca3af;line-height:1.4}
+.perf-section{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px}
+.perf-bar-container{margin-bottom:16px}
+.perf-bar-header{display:flex;justify-content:space-between;margin-bottom:6px}
+.perf-bar-label{font-size:13px;color:#9ca3af}
+.perf-bar-values{font-size:12px}
+.perf-target{color:#6b7280}
+.perf-current{font-weight:700;margin-left:8px}
+.perf-bar{height:10px;background:#1f2937;border-radius:5px;overflow:hidden}
+.perf-bar-fill{height:100%;border-radius:5px;transition:width .5s}
+.empty-state{padding:40px;text-align:center;color:#4b5563;font-size:13px}
+svg text{font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+</style>
 </head>
-<body class="min-h-screen antialiased">
-  <div id="root"></div>
-  <script type="text/babel" src="/app.js"></script>
+<body>
+<div id="app"></div>
+<script>
+// ========== CONSTANTS ==========
+const AGENTS=[
+{id:'context',name:'Context Agent',nameKo:'상황인식 에이전트',tech:'EIF (Extended Isolation Forest) 이상탐지',color:'#3B82F6',short:'CTX'},
+{id:'risk_trajectory',name:'Risk Trajectory Agent',nameKo:'위험궤적분석 에이전트',tech:'HMM (Hidden Markov Model) 상태전이',color:'#F97316',short:'RSK'},
+{id:'planning',name:'Planning Agent',nameKo:'대응계획 에이전트',tech:'CBR (Case-Based Reasoning) 사례기반추론',color:'#8B5CF6',short:'PLN'},
+{id:'execution',name:'Execution Agent',nameKo:'실행관리 에이전트',tech:'자동화 실행 엔진',color:'#22C55E',short:'EXE'},
+{id:'monitoring',name:'Monitoring Agent',nameKo:'모니터링 에이전트',tech:'실시간 KPI 추적 엔진',color:'#14B8A6',short:'MON'},
+{id:'recovery',name:'Recovery Agent',nameKo:'복구관리 에이전트',tech:'복구 시뮬레이션 엔진',color:'#EF4444',short:'RCV'},
+{id:'orchestration',name:'Orchestration Agent',nameKo:'오케스트레이션 에이전트',tech:'Multi-Agent 오케스트레이션',color:'#EAB308',short:'ORC'}
+];
+const SCENARIOS=[
+{id:'disease_asf',title:'ASF 질병 조기경보',desc:'최근 3일간 급이량이 기준 대비 35% 감소. ASF(아프리카돼지열병) 의심 상황을 감지하고 다중 에이전트가 협력 대응합니다.',icon:'🐷',iconBg:'#FEE2E2',iconColor:'#EF4444',details:['최근 3일간 급이량 35% 급감 감지','EIF 이상탐지 알고리즘으로 이상 패턴 확인','HMM 상태전이 모델로 K3(위험) 상태 판정','48시간 내 K4(긴급) 전환 확률 50% 추정']},
+{id:'environment_heat',title:'고온 스트레스 환경경보',desc:'축사 내부 온도 32°C 초과 지속, 돼지 열 스트레스 징후를 감지하고 환경 제어 대응을 수행합니다.',icon:'🌡️',iconBg:'#FEF3C7',iconColor:'#F59E0B',details:['축사 내부 온도 33.2°C, 습도 82% 감지','THI(온습도지수) 위험 구간 진입','환기 시스템 최대 가동 및 쿨링 패드 작동 권고','72시간 이내 폭염 지속 시 생산성 저하 예상']},
+{id:'shipment_optimization',title:'최적 출하시기 분석',desc:'사료 효율(FCR)과 성장 데이터를 분석하여 경제적으로 최적인 출하 시기를 결정합니다.',icon:'📊',iconBg:'#DBEAFE',iconColor:'#3B82F6',details:['현재 평균 체중 112kg, 목표 115kg 도달 임박','FCR(사료요구율) 3.1로 경제적 효율 구간','일당증체량(ADG) 0.85kg/일 안정적 유지','사료 가격 상승 추세 반영 조기 출하 유리']}
+];
+const STEP_LABELS=['데이터 수집 & Context 분석','위험 궤적 분석','대응 계획 수립','조치 실행','모니터링 설정','효과 평가','최종 보고'];
+function riskColor(l){return{normal:'#22C55E',caution:'#EAB308',danger:'#F97316',emergency:'#EF4444'}[l]||'#6B7280'}
+function riskLabel(l){return{normal:'정상',caution:'주의',danger:'위험',emergency:'긴급'}[l]||'알 수 없음'}
+function agentColor(id){const a=AGENTS.find(x=>x.id===id);return a?a.color:'#6B7280'}
+function agentName(id){const a=AGENTS.find(x=>x.id===id);return a?a.name+' ('+a.nameKo+')':id}
+function fmtTime(d){const x=d instanceof Date?d:new Date(d);return x.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})}
+function fmtDur(ms){return ms<1000?ms+'ms':(ms/1000).toFixed(1)+'s'}
+function summarize(id,r){
+if(!r)return'완료';
+switch(id){
+case'context':return r.situation_summary||'상황 분석 완료';
+case'risk_trajectory':return'상태: '+(r.current_state||'N/A')+', 심각도: '+(r.severity_score||'N/A')+', 위험전환: '+(r.risk_timeline_hours||'N/A')+'시간';
+case'planning':return'대응 계획 수립 완료. 신뢰도: '+(r.confidence||'N/A');
+case'execution':return r.alert_message||'실행 체크리스트 생성';
+case'monitoring':return'다음 점검: '+(r.next_check_hours||'N/A')+'시간 후';
+case'recovery':return'효과 점수: '+(r.effectiveness_score||'N/A');
+case'orchestration':return r.farmer_message||'최종 보고서 생성';
+default:return'완료';
+}}
+
+// ========== STATE ==========
+const S={
+activeTab:'dashboard',
+riskLevel:'normal',
+feedingData:[],
+anomalyIndices:[],
+metrics:{feedingChangeRate:-2.1,anomalyDays:0,estimatedRiskHours:999},
+recommendation:'',
+pipeline:{isRunning:false,currentAgent:null,completedAgents:[],scenario:null},
+logs:[],
+agentPerfs:{},
+};
+
+// ========== RENDER ==========
+function render(){
+const app=document.getElementById('app');
+const rc=riskColor(S.riskLevel);
+const rl=riskLabel(S.riskLevel);
+const borderClass=S.riskLevel==='emergency'?'risk-emergency':S.riskLevel==='danger'?'risk-danger':S.riskLevel==='caution'?'risk-caution':'';
+document.body.className='min-h-screen antialiased '+borderClass;
+
+app.innerHTML=`
+<div class="header">
+<div class="header-left">
+<div>
+<div class="header-title"><span>MANSA</span> 축산 AI 에이전트 데모</div>
+<div class="header-sub">제일축산영농조합법인 1호동</div>
+</div>
+<div class="badge" style="background:${rc}20;color:${rc};border:1px solid ${rc}40">
+<span class="badge-dot" style="background:${rc};${S.riskLevel==='emergency'?'animation:ping 1s infinite':''}"></span>
+${rl}
+</div>
+</div>
+<div class="header-right">
+<div><span class="status-dot" style="background:${S.pipeline.isRunning?'#FACC15':'#22C55E'};${S.pipeline.isRunning?'animation:pulse 1.5s infinite':''}"></span> 에이전트 7/7 가동 중</div>
+<div id="clock" style="font-variant-numeric:tabular-nums"></div>
+</div>
+</div>
+<div class="tabs">
+<div class="tab ${S.activeTab==='dashboard'?'active':''}" onclick="switchTab('dashboard')">실시간 모니터링</div>
+<div class="tab ${S.activeTab==='scenarios'?'active':''}" onclick="switchTab('scenarios')">시나리오 실행</div>
+<div class="tab ${S.activeTab==='agents'?'active':''}" onclick="switchTab('agents')">에이전트 상세</div>
+</div>
+<div class="main">
+<div id="tab-dashboard" class="${S.activeTab!=='dashboard'?'hidden':''}">${renderDashboard()}</div>
+<div id="tab-scenarios" class="${S.activeTab!=='scenarios'?'hidden':''}">${renderScenarios()}</div>
+<div id="tab-agents" class="${S.activeTab!=='agents'?'hidden':''}">${renderAgents()}</div>
+</div>`;
+startClock();
+}
+
+function renderDashboard(){
+const m=S.metrics;
+const alertFeed=m.feedingChangeRate<-20;
+const alertDays=m.anomalyDays>2;
+const alertHours=m.estimatedRiskHours<24;
+return`<div class="row">
+<div class="col-left">
+<div class="card">
+<div style="display:flex;justify-content:space-between;margin-bottom:4px">
+<div class="card-title">급이패턴 실시간 모니터링</div>
+<div style="font-size:11px;color:#4b5563">최근 ${S.feedingData.length}일 데이터</div>
+</div>
+${renderChart()}
+</div>
+<div class="card">
+<div class="card-title">에이전트 실행 로그</div>
+<div class="log-container">${S.logs.length===0?'<div class="empty-state">시나리오를 실행하면 에이전트 로그가 여기에 표시됩니다.</div>':S.logs.slice().reverse().map(l=>`
+<div class="log-entry" style="border-left-color:${agentColor(l.agentId)}">
+<div class="log-header">
+<div style="display:flex;align-items:center;gap:6px">
+<span style="width:6px;height:6px;border-radius:50%;background:${agentColor(l.agentId)};display:inline-block"></span>
+<span class="log-agent" style="color:${agentColor(l.agentId)}">${l.agentName}</span>
+${l.status==='running'?'<span class="log-running"><span class="log-running-dot"></span>실행 중...</span>':''}
+</div>
+<div class="log-meta">${l.duration_ms>0?fmtDur(l.duration_ms)+' · ':'' }${fmtTime(l.timestamp)}</div>
+</div>
+<div class="log-content">${(l.content||'').substring(0,200)}</div>
+</div>`).join('')}</div>
+</div>
+</div>
+<div class="col-right">
+<div class="metric-card ${alertFeed?'alert':''}">
+<div class="metric-label">급이량 변화율</div>
+<div><span class="metric-value ${alertFeed?'alert':''}">${m.feedingChangeRate.toFixed(1)}</span><span class="metric-unit">%</span></div>
+<div class="metric-desc">오늘 vs 7일 평균</div>
+</div>
+<div class="metric-card ${alertDays?'alert':''}">
+<div class="metric-label">이상 지속일수</div>
+<div><span class="metric-value ${alertDays?'alert':''}">${m.anomalyDays}</span><span class="metric-unit">일</span></div>
+<div class="metric-desc">연속 이상 탐지 일수</div>
+</div>
+<div class="metric-card ${alertHours?'alert':''}">
+<div class="metric-label">위험 전환 예상</div>
+<div><span class="metric-value ${alertHours?'alert':''}">${m.estimatedRiskHours>100?'∞':m.estimatedRiskHours}</span><span class="metric-unit">${m.estimatedRiskHours>100?'':'시간'}</span></div>
+<div class="metric-desc">HMM 모델 추정</div>
+</div>
+<div class="recommend-box" style="border-left-color:${riskColor(S.riskLevel)}">
+<div class="recommend-title">💡 AI 조치 권고안</div>
+<div class="recommend-text">${S.recommendation||'시나리오를 실행하면 AI 에이전트의 분석 결과가 여기에 표시됩니다.'}</div>
+</div>
+<div class="card" style="text-align:center">
+<div class="card-title" style="text-align:center">Agentic Loop 상태</div>
+${renderAgentLoop()}
+</div>
+</div>
+</div>`;
+}
+
+function renderChart(){
+const d=S.feedingData;if(!d.length)return'<div class="empty-state">데이터 로딩 중...</div>';
+const W=700,H=250,PL=45,PR=15,PT=15,PB=30;
+const cw=W-PL-PR,ch=H-PT-PB;
+const vals=d.map(x=>x.consumption_kg).concat(d.map(x=>x.normal_baseline));
+const minV=Math.floor(Math.min(...vals)/10)*10-10;
+const maxV=Math.ceil(Math.max(...vals)/10)*10+10;
+const range=maxV-minV||1;
+function x(i){return PL+i/(d.length-1)*cw}
+function y(v){return PT+(1-(v-minV)/range)*ch}
+// Grid
+let svg=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:300px">`;
+for(let v=minV;v<=maxV;v+=20){
+svg+=`<line x1="${PL}" y1="${y(v)}" x2="${W-PR}" y2="${y(v)}" stroke="#1f2937" stroke-dasharray="3,3"/>`;
+svg+=`<text x="${PL-6}" y="${y(v)+4}" text-anchor="end" fill="#6b7280" font-size="10">${v}</text>`;
+}
+// X labels
+for(let i=0;i<d.length;i+=5){
+svg+=`<text x="${x(i)}" y="${H-5}" text-anchor="middle" fill="#6b7280" font-size="10">${d[i].date.slice(5)}</text>`;
+}
+// Anomaly lines
+S.anomalyIndices.forEach(i=>{if(i<d.length){
+svg+=`<line x1="${x(i)}" y1="${PT}" x2="${x(i)}" y2="${H-PB}" stroke="#EF4444" stroke-dasharray="4,4" opacity=".6"/>`;
+svg+=`<text x="${x(i)}" y="${PT-3}" text-anchor="middle" fill="#EF4444" font-size="9">이상 탐지</text>`;
+}});
+// Baseline (blue dashed)
+let bl='';d.forEach((p,i)=>{bl+=(i?'L':'M')+x(i)+','+y(p.normal_baseline)});
+svg+=`<path d="${bl}" fill="none" stroke="#3B82F6" stroke-width="2" stroke-dasharray="5,5"/>`;
+// Consumption (red solid)
+let cl='';d.forEach((p,i)=>{cl+=(i?'L':'M')+x(i)+','+y(p.consumption_kg)});
+svg+=`<path d="${cl}" fill="none" stroke="#EF4444" stroke-width="2"/>`;
+// Dots
+d.forEach((p,i)=>{
+const isA=S.anomalyIndices.includes(i);
+svg+=`<circle cx="${x(i)}" cy="${y(p.consumption_kg)}" r="${isA?5:2}" fill="#EF4444" ${isA?'stroke="#FCA5A5" stroke-width="2"':''}/>`;
+});
+// Legend
+svg+=`<rect x="${PL+10}" y="${PT}" width="10" height="2" fill="#3B82F6"/><line x1="${PL+10}" y1="${PT+1}" x2="${PL+20}" y2="${PT+1}" stroke="#3B82F6" stroke-width="2" stroke-dasharray="3,3"/><text x="${PL+24}" y="${PT+5}" fill="#9ca3af" font-size="10">정상 기준선</text>`;
+svg+=`<rect x="${PL+110}" y="${PT}" width="10" height="2" fill="#EF4444"/><text x="${PL+124}" y="${PT+5}" fill="#9ca3af" font-size="10">실제 측정값</text>`;
+svg+=`</svg>`;
+return svg;
+}
+
+function renderAgentLoop(){
+const cx=120,cy=120,r=85,nr=24;
+let svg=`<svg width="240" height="240" viewBox="0 0 240 240" style="display:inline-block">`;
+// Lines
+AGENTS.forEach((a,i)=>{
+const ni=(i+1)%AGENTS.length;
+const a1=(i*360/AGENTS.length-90)*Math.PI/180;
+const a2=(ni*360/AGENTS.length-90)*Math.PI/180;
+const x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);
+const x2=cx+r*Math.cos(a2),y2=cy+r*Math.sin(a2);
+const active=S.pipeline.completedAgents.includes(a.id);
+svg+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${active?a.color:'#374151'}" stroke-width="${active?2:1}" ${active?'':'stroke-dasharray="4,4"'} opacity="${active?1:.4}"/>`;
+});
+// Nodes
+AGENTS.forEach((a,i)=>{
+const ang=(i*360/AGENTS.length-90)*Math.PI/180;
+const nx=cx+r*Math.cos(ang),ny=cy+r*Math.sin(ang);
+const isCur=S.pipeline.currentAgent===a.id;
+const isDone=S.pipeline.completedAgents.includes(a.id);
+if(isCur){
+svg+=`<circle cx="${nx}" cy="${ny}" r="${nr+8}" fill="none" stroke="${a.color}" stroke-width="2" opacity=".4"><animate attributeName="r" from="${nr+2}" to="${nr+14}" dur="1.5s" repeatCount="indefinite"/><animate attributeName="opacity" from=".5" to="0" dur="1.5s" repeatCount="indefinite"/></circle>`;
+}
+svg+=`<circle cx="${nx}" cy="${ny}" r="${nr}" fill="${isCur||isDone?a.color+'30':'#1F2937'}" stroke="${isCur?a.color:isDone?a.color:'#4B5563'}" stroke-width="${isCur?3:isDone?2:1}"/>`;
+if(isDone&&!isCur)svg+=`<text x="${nx}" y="${ny-3}" text-anchor="middle" fill="${a.color}" font-size="12" font-weight="bold">✓</text>`;
+svg+=`<text x="${nx}" y="${ny+(isDone&&!isCur?10:2)}" text-anchor="middle" dominant-baseline="middle" fill="${isCur||isDone?a.color:'#9CA3AF'}" font-size="9" font-weight="${isCur?'bold':'normal'}">${a.short}</text>`;
+});
+svg+=`<text x="${cx}" y="${cy-5}" text-anchor="middle" fill="#6b7280" font-size="10" font-weight="bold">Agentic</text>`;
+svg+=`<text x="${cx}" y="${cy+9}" text-anchor="middle" fill="#6b7280" font-size="10" font-weight="bold">Loop</text>`;
+svg+=`</svg>`;
+return svg;
+}
+
+function renderScenarios(){
+let h=`<h2 style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">시나리오 선택</h2><div class="scenarios-grid">`;
+SCENARIOS.forEach(sc=>{
+const isActive=S.pipeline.scenario===sc.id;
+const cls=S.pipeline.isRunning?(isActive?'scenario-card active disabled':'scenario-card disabled'):(isActive?'scenario-card active':'scenario-card');
+h+=`<div class="${cls}" onclick="runScenario('${sc.id}')">
+<div class="scenario-icon" style="background:${sc.iconBg};color:${sc.iconColor}">${sc.icon}</div>
+<div class="scenario-title">${sc.title}</div>
+<div class="scenario-desc">${sc.desc}</div>
+${sc.details.map(d=>`<div class="scenario-detail">${d}</div>`).join('')}
+${isActive&&S.pipeline.isRunning?'<div style="margin-top:10px;font-size:12px;color:#3B82F6;display:flex;align-items:center;gap:6px"><span class="log-running-dot"></span>에이전트 실행 중...</div>':''}
+</div>`;
+});
+h+=`</div>`;
+if(S.pipeline.isRunning||S.pipeline.completedAgents.length>0)h+=renderStepper();
+return h;
+}
+
+function renderStepper(){
+let h=`<div class="stepper"><div class="stepper-title">에이전트 실행 진행 상황</div>`;
+AGENTS.forEach((a,i)=>{
+const isDone=S.pipeline.completedAgents.includes(a.id);
+const isCur=S.pipeline.currentAgent===a.id;
+h+=`<div class="step">
+<div class="step-indicator">
+<div class="step-circle ${isDone?'completed':''} ${isCur?'current':''}" style="${isDone?'background:'+a.color:''}${isCur?'border-color:'+a.color+';color:'+a.color:''}">${isDone?'✓':(i+1)}</div>
+${i<AGENTS.length-1?`<div class="step-line" style="background:${isDone?a.color:'#4b5563'}"></div>`:''}
+</div>
+<div class="step-content">
+<div class="step-label ${isCur||isDone?'active':''}" style="${isCur?'color:'+a.color:''}">${STEP_LABELS[i]}${isCur?' <span class="step-status" style="color:'+a.color+'"><span class="log-running-dot" style="background:'+a.color+'"></span>처리 중...</span>':''}</div>
+<div class="step-desc">${a.nameKo}</div>
+</div>
+</div>`;
+});
+h+=`</div>`;
+return h;
+}
+
+function renderAgents(){
+let h=`<h2 style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">에이전트 상세 정보</h2><div class="agents-grid">`;
+AGENTS.forEach(a=>{
+const p=S.agentPerfs[a.id];
+h+=`<div class="agent-card" style="border-top-color:${a.color}">
+<div class="agent-icon" style="background:${a.color}20;color:${a.color}">${a.short}</div>
+<div class="agent-name">${a.name}</div>
+<div class="agent-name-ko">${a.nameKo}</div>
+<div class="agent-tech">${a.tech}</div>
+${p?`<div class="agent-stats">
+<div class="agent-stat"><span class="agent-stat-label">실행 횟수</span><span class="agent-stat-value">${p.count}회</span></div>
+<div class="agent-stat"><span class="agent-stat-label">평균 응답시간</span><span class="agent-stat-value">${fmtDur(p.avgTime)}</span></div>
+${p.lastDecision?`<div class="agent-decision"><div style="font-size:10px;color:#6b7280;margin-bottom:4px">최근 판단</div>${p.lastDecision.substring(0,150)}</div>`:''}
+</div>`:'<div class="agent-stats"><div class="agent-stat"><span class="agent-stat-label">실행 횟수</span><span class="agent-stat-value">0회</span></div></div>'}
+</div>`;
+});
+h+=`</div>`;
+// Performance section
+const perfs=[
+{label:'응답 정확도',target:85,current:87.3,unit:'%',suffix:' 이상',good:true},
+{label:'응답 일관성',target:90,current:91.2,unit:'%',suffix:' 이상',good:true},
+{label:'환각 발생률',target:5,current:3.2,unit:'%',suffix:' 이하',good:true,inverse:true}
+];
+h+=`<div class="perf-section"><h2 style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px">시스템 성과 지표</h2>`;
+perfs.forEach(p=>{
+const pct=p.inverse?(100-p.current/p.target*100+100):(p.current/100*100);
+h+=`<div class="perf-bar-container">
+<div class="perf-bar-header">
+<span class="perf-bar-label">${p.label}</span>
+<div class="perf-bar-values">
+<span class="perf-target">목표: ${p.target}${p.unit}${p.suffix}</span>
+<span class="perf-current" style="color:${p.good?'#4ade80':'#f87171'}">${p.current}${p.unit}</span>
+</div>
+</div>
+<div class="perf-bar"><div class="perf-bar-fill" style="width:${Math.min(pct,100)}%;background:${p.good?'#22C55E':'#EF4444'}"></div></div>
+</div>`;
+});
+h+=`</div>`;
+return h;
+}
+
+// ========== ACTIONS ==========
+function switchTab(t){S.activeTab=t;render();}
+function startClock(){
+const el=document.getElementById('clock');
+if(el){el.textContent=new Date().toLocaleString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}
+}
+setInterval(()=>{const el=document.getElementById('clock');if(el)startClock();},1000);
+
+async function loadInitialData(){
+try{
+const res=await fetch('/api/simulator?scenario=disease_asf');
+const data=await res.json();
+S.feedingData=data.feedingData.slice(0,25);
+S.anomalyIndices=[];
+S.metrics={feedingChangeRate:-2.1,anomalyDays:0,estimatedRiskHours:999};
+S.riskLevel='normal';
+render();
+}catch(e){console.error(e);render();}
+}
+
+async function runScenario(id){
+if(S.pipeline.isRunning)return;
+S.pipeline={isRunning:true,currentAgent:null,completedAgents:[],scenario:id};
+S.logs=[];
+S.recommendation='';
+S.activeTab='scenarios';
+// Load full scenario data
+try{
+const res=await fetch('/api/simulator?scenario='+id);
+const data=await res.json();
+S.feedingData=data.feedingData;
+S.anomalyIndices=data.anomalyScores.filter(a=>a.isAnomaly).map(a=>a.index);
+if(id==='disease_asf'){S.metrics={feedingChangeRate:-35.2,anomalyDays:3,estimatedRiskHours:12};S.riskLevel='danger';}
+else if(id==='environment_heat'){S.metrics={feedingChangeRate:-5.3,anomalyDays:0,estimatedRiskHours:48};S.riskLevel='caution';}
+else{S.metrics={feedingChangeRate:2.1,anomalyDays:0,estimatedRiskHours:999};S.riskLevel='normal';}
+render();
+}catch(e){console.error(e);}
+// Start SSE
+try{
+const resp=await fetch('/api/agents/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenario:id})});
+const reader=resp.body.getReader();
+const decoder=new TextDecoder();
+let buf='';
+while(true){
+const{done,value}=await reader.read();
+if(done)break;
+buf+=decoder.decode(value,{stream:true});
+const lines=buf.split('\n');
+buf=lines.pop()||'';
+for(const line of lines){
+if(line.startsWith('data: ')){
+try{
+const evt=JSON.parse(line.slice(6));
+handleEvent(evt);
+}catch(e){}
+}
+}
+}
+}catch(e){
+console.error('Pipeline error:',e);
+S.pipeline.isRunning=false;
+render();
+}
+}
+
+function handleEvent(evt){
+const d=evt.data||{};
+switch(evt.type){
+case'agent_start':
+S.pipeline.currentAgent=d.agentId;
+S.logs.push({id:'s-'+d.agentId+'-'+Date.now(),agentId:d.agentId,agentName:d.agentName||agentName(d.agentId),content:agentName(d.agentId)+' 분석 시작...',timestamp:d.timestamp||new Date().toISOString(),duration_ms:0,status:'running'});
+render();
+break;
+case'agent_complete':
+S.pipeline.completedAgents.push(d.agentId);
+const summary=summarize(d.agentId,d.response);
+S.logs.push({id:'c-'+d.agentId+'-'+Date.now(),agentId:d.agentId,agentName:d.agentName||agentName(d.agentId),content:summary,timestamp:d.timestamp||new Date().toISOString(),duration_ms:d.duration_ms||0,status:'completed'});
+// Update performance
+const prev=S.agentPerfs[d.agentId]||{count:0,avgTime:0};
+S.agentPerfs[d.agentId]={count:prev.count+1,avgTime:d.duration_ms||prev.avgTime,lastDecision:summary};
+// Orchestration → update risk + recommendation
+if(d.agentId==='orchestration'&&d.response){
+if(d.response.alert_level)S.riskLevel=d.response.alert_level;
+if(d.response.farmer_message)S.recommendation=d.response.farmer_message;
+}
+render();
+break;
+case'agent_error':
+S.logs.push({id:'e-'+d.agentId+'-'+Date.now(),agentId:d.agentId,agentName:d.agentName||d.agentId,content:'오류: '+(d.error||'알 수 없음'),timestamp:d.timestamp||new Date().toISOString(),duration_ms:0,status:'error'});
+render();
+break;
+case'pipeline_complete':
+S.pipeline.isRunning=false;
+S.pipeline.currentAgent=null;
+render();
+setTimeout(()=>{S.activeTab='dashboard';render();},800);
+break;
+}
+}
+
+// ========== INIT ==========
+render();
+loadInitialData();
+</script>
 </body>
 </html>
